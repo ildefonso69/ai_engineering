@@ -64,6 +64,9 @@ dev = [
     "ruff>=0.5",
     "fakeredis>=2.20",
     "deepeval>=1.0",
+    # Session 11 — RAGAS generation-quality evaluation (LLM-judge + embeddings).
+    "ragas>=0.2",
+    "datasets>=2.19",
 ]
 
 [tool.ruff]

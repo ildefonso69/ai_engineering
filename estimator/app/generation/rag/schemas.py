@@ -10,7 +10,7 @@ from __future__ import annotations
 from datetime import date
 from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 # Closed universe of client sectors present in the sample dataset. Kept as a
 # Literal so a typo or an unexpected sector fails validation loudly instead of
@@ -262,12 +262,37 @@ class Assumption(BaseModel):
     rationale: str
 
 
+class SourceReference(BaseModel):
+    """A verifiable, line-level citation back to a single retrieved chunk.
+
+    Session 11 lifts citation from the coarse, estimate-global
+    :class:`SourceCitation` down to the individual estimate line: every grounded
+    line carries the concrete chunk it derived from plus the verbatim evidence
+    that backs it, so a reader (and :func:`validation.verify_citations`) can
+    check the claim instead of trusting it.
+    """
+
+    chunk_id: str = Field(
+        description="Id of the retrieved chunk supporting this line — the `id` "
+        "attribute of the <source> element it was taken from."
+    )
+    document_id: str = Field(
+        description="Historical budget document the chunk belongs to — the "
+        "`document_id` attribute of the <source> element."
+    )
+    evidence: str = Field(
+        description="Verbatim span or figure copied from the source that backs "
+        "this line. Quote the source; do not paraphrase."
+    )
+
+
 class TaskItem(BaseModel):
     """One concrete engineering task inside a functional module, in engineer-days.
 
-    ``sources`` cite the historical chunk(s) the task was derived from; a task
-    with no historical analog is left uncited and should surface as an
-    :class:`Assumption` instead.
+    Each task is an estimate *line*. When ``grounded`` is True the line derives
+    from historical evidence and carries at least one :class:`SourceReference`;
+    when False the line has no sufficient source data — it must not invent hours
+    and should surface its scope as an :class:`Assumption` instead.
     """
 
     name: str
@@ -277,9 +302,38 @@ class TaskItem(BaseModel):
         ge=0,
         description="Effort in engineer-days. None in the structure-only generation "
         "mode (Session 10): the LLM proposes the module→task structure and the hours "
-        "are derived afterwards by per-task vector search, not inferred here.",
+        "are derived afterwards by per-task vector search, not inferred here. Must be "
+        "None when ``grounded`` is False (no source data => no invented hours).",
     )
-    sources: list[int] = Field(default_factory=list, description="Chunk ids that back this task.")
+    grounded: bool = Field(
+        default=False,
+        description="True iff this line is backed by retrieved source data. False "
+        "means 'no sufficient source data': the line carries no sources and no "
+        "invented hours.",
+    )
+    sources: list[SourceReference] = Field(
+        default_factory=list,
+        description="Per-line citations. Non-empty iff ``grounded`` is True.",
+    )
+
+    @model_validator(mode="after")
+    def _grounding_integrity(self) -> "TaskItem":
+        """Enforce the Session 11 line-level grounding contract.
+
+        A grounded line must cite at least one source; an ungrounded line must
+        neither cite sources nor invent hours. Violations raise so Instructor
+        re-prompts the model rather than letting an unverifiable line through.
+        """
+        if self.grounded and not self.sources:
+            raise ValueError("a grounded line must cite at least one source")
+        if not self.grounded and self.sources:
+            raise ValueError("an ungrounded line (grounded=False) must not carry sources")
+        if not self.grounded and self.engineer_days is not None:
+            raise ValueError(
+                "an ungrounded line (grounded=False) must leave engineer_days null; "
+                "do not invent hours without source data"
+            )
+        return self
 
 
 class WorkModule(BaseModel):
@@ -310,6 +364,57 @@ class Estimate(BaseModel):
     confidence: Confidence
     reasoning: str = Field(description="How the estimate was derived from the sources.")
     insufficient_context_explanation: str | None = None
+
+
+# ---------------------------------------------------------------------------
+# Session 11 — programmatic citation verification.
+#
+# The output of :func:`validation.verify_citations`: a per-line audit of where
+# every estimate line's citation points and whether that chunk was actually in
+# the retrieved context. A dangling citation (an id the LLM never saw) is a
+# grounding failure, not a cosmetic detail — the report keeps it visible.
+# ---------------------------------------------------------------------------
+
+LineCitationStatus = Literal["grounded", "dangling", "insufficient"]
+
+
+class LineCitation(BaseModel):
+    """The citation status of a single estimate line."""
+
+    module: str = Field(description="Module the line belongs to.")
+    component: str = Field(description="The line (task) name.")
+    status: LineCitationStatus = Field(
+        description="grounded = all cited chunks were retrieved; dangling = at "
+        "least one cited chunk_id was never in the context; insufficient = the "
+        "line is flagged as having no sufficient source data."
+    )
+    cited_chunk_ids: list[str] = Field(default_factory=list)
+    dangling_chunk_ids: list[str] = Field(
+        default_factory=list, description="Cited ids that were never retrieved."
+    )
+
+
+class CitationReport(BaseModel):
+    """Aggregate result of verifying an estimate's citations against the context."""
+
+    total_lines: int = Field(ge=0)
+    grounded_lines: int = Field(ge=0, description="Lines whose every citation was retrieved.")
+    dangling_lines: int = Field(ge=0, description="Lines with at least one fabricated citation.")
+    insufficient_lines: int = Field(ge=0, description="Lines flagged as no sufficient data.")
+    verified_citations: int = Field(
+        ge=0, description="Count of individual citations that resolved to a retrieved chunk."
+    )
+    dangling_citations: list[str] = Field(
+        default_factory=list,
+        description="Sorted, de-duplicated cited ids that were never retrieved "
+        "(line-level and estimate-global). Empty means every citation is real.",
+    )
+    lines: list[LineCitation] = Field(default_factory=list)
+
+    @property
+    def has_dangling(self) -> bool:
+        """True when any citation points outside the retrieved context."""
+        return bool(self.dangling_citations)
 
 
 # ---- HTTP request models for the Session 9 routers ------------------------
@@ -413,9 +518,15 @@ class GenerateResult(BaseModel):
     the wizard surfaces (instead of auto-retrying like the full pipeline)."""
 
     estimate: Estimate
-    fabricated_source_ids: list[int] = Field(
+    fabricated_source_ids: list[str] = Field(
         default_factory=list,
-        description="Cited source ids not present in kept_chunks (empty = clean).",
+        description="Cited chunk_ids not present in kept_chunks (empty = clean). "
+        "Mirrors ``citation_report.dangling_citations`` for backward compatibility.",
+    )
+    citation_report: CitationReport | None = Field(
+        default=None,
+        description="Session 11 per-line citation verification report (None for the "
+        "structure-only stage, which has no sources to verify).",
     )
     coherent: bool = Field(description="False when an insufficient estimate still carries numbers.")
 

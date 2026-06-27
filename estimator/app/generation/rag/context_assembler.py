@@ -17,9 +17,16 @@ from app.generation.rag.schemas import RetrievedChunk
 
 
 def _wrap_chunk(chunk: RetrievedChunk) -> str:
-    """Render a single chunk as a self-describing ``<source>`` XML element."""
+    """Render a single chunk as a self-describing ``<source>`` XML element.
+
+    ``id`` is what a line cites in its per-line ``SourceReference.chunk_id``;
+    ``document_id`` is the parent budget the chunk belongs to (copied into
+    ``SourceReference.document_id``). Both are exposed so the generator can
+    attribute every line to a concrete, verifiable source.
+    """
+    document_id = chunk.source_id or chunk.budget_id or "unknown"
     return (
-        f'<source id="{chunk.id}" sector="{chunk.sector}" '
+        f'<source id="{chunk.id}" document_id="{document_id}" sector="{chunk.sector}" '
         f'project_year="{chunk.project_year}" chunk_type="{chunk.chunk_type}" '
         f'distance="{chunk.distance:.4f}">\n'
         f"{chunk.content}\n"

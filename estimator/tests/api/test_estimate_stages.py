@@ -19,6 +19,9 @@ from app.generation.rag.schemas import (
     RetrievalResult,
     RetrievedChunk,
     SourceCitation,
+    SourceReference,
+    TaskItem,
+    WorkModule,
 )
 from app.main import app
 
@@ -162,13 +165,31 @@ def _generate_payload(estimate: Estimate) -> dict:
 
 
 def test_generate_flags_fabricated_citations(client, monkeypatch):
+    # A grounded line cites chunk_id "999", which was never retrieved (kept = [1]).
     estimate = Estimate(
         confidence="high",
         reasoning="r",
-        sources=[
-            SourceCitation(source_id=1, relevance="primary", used_for="auth"),
-            SourceCitation(source_id=999, relevance="supporting", used_for="ghost"),
+        total_engineer_days=12,
+        modules=[
+            WorkModule(
+                name="Auth",
+                tasks=[
+                    TaskItem(
+                        name="OAuth login",
+                        engineer_days=12,
+                        grounded=True,
+                        sources=[
+                            SourceReference(
+                                chunk_id="999",
+                                document_id="BUD-GHOST",
+                                evidence="ghost",
+                            )
+                        ],
+                    )
+                ],
+            )
         ],
+        sources=[SourceCitation(source_id=1, relevance="primary", used_for="auth")],
     )
 
     async def fake_generate(context_block, structured_query, include_hours=True):
@@ -178,7 +199,8 @@ def test_generate_flags_fabricated_citations(client, monkeypatch):
     r = client.post("/v1/estimate/stages/generate", json=_generate_payload(estimate), headers=_h())
     assert r.status_code == 200
     body = r.json()
-    assert body["fabricated_source_ids"] == [999]
+    assert body["fabricated_source_ids"] == ["999"]
+    assert body["citation_report"]["dangling_lines"] == 1
     assert body["coherent"] is True
 
 
