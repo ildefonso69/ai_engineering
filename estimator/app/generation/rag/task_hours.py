@@ -36,6 +36,7 @@ from app.generation.rag.schemas import (
     TaskHoursResult,
     TaskNeighbor,
 )
+from app.generation.rag.quality.synthesis import synthesize_range
 
 log = structlog.get_logger()
 
@@ -105,6 +106,8 @@ async def estimate_one(
     distance_threshold: float,
     search_mode: str = "vector",
     rerank: bool = False,
+    synthesis: bool = False,
+    contradiction_threshold: float = 0.35,
 ) -> TaskHoursEstimate:
     """Estimate hours for a single task from the historical task corpus.
 
@@ -152,6 +155,14 @@ async def estimate_one(
     hours, reliability, dispersion = _consensus(
         [(n.estimated_hours, n.distance) for n in neighbors]
     )
+    # Session 11: when the neighbours contradict beyond the threshold, surface the
+    # spread as a range with a reason instead of averaging the conflict away. The
+    # point ``estimated_hours`` still carries the consensus for the human to edit.
+    hours_range = (
+        await synthesize_range(neighbors, dispersion, threshold=contradiction_threshold)
+        if synthesis
+        else None
+    )
     return TaskHoursEstimate(
         module=module,
         task=name,
@@ -160,6 +171,7 @@ async def estimate_one(
         has_match=True,
         dispersion=dispersion,
         neighbors=neighbors,
+        hours_range=hours_range,
     )
 
 
@@ -188,6 +200,7 @@ async def estimate_all(
     runtime = get_runtime_retrieval_config()
     search_mode = runtime.effective_search_mode()
     rerank = runtime.effective_rerank()
+    synthesis = runtime.effective_synthesis()
 
     coros = [
         estimate_one(
@@ -198,6 +211,8 @@ async def estimate_all(
             distance_threshold=threshold,
             search_mode=search_mode,
             rerank=rerank,
+            synthesis=synthesis,
+            contradiction_threshold=settings.SYNTHESIS_CONTRADICTION_THRESHOLD,
         )
         for module in modules
         for task in module.tasks

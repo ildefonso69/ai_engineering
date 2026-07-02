@@ -7,7 +7,8 @@ the vectors plus aggregate stats.
 
 from __future__ import annotations
 
-from datetime import date
+import uuid
+from datetime import date, datetime
 from typing import Literal
 
 from pydantic import BaseModel, Field, model_validator
@@ -122,6 +123,73 @@ class IngestResponse(BaseModel):
     chunks_created: int = Field(ge=0, description="Chunks persisted for this document.")
     embedding_dimension: int = Field(description="Dimensionality of the stored vectors.")
     ingestion_time_ms: int = Field(ge=0, description="Wall-clock ingest time.")
+
+
+# ---------------------------------------------------------------------------
+# Session 11 — incremental corpus expansion (add NEW information + index it).
+#
+# Not re-embedding the existing corpus (that would need a model change / a
+# blue-green migration, out of scope): this is growing the vector DB with new
+# documents, embedded with the SAME model, indexed by the HNSW index the
+# Session 11 migration provisions. Runs as an async job (BackgroundTask) so a
+# batch of documents can report progress instead of blocking the request.
+# ---------------------------------------------------------------------------
+
+
+class IndexRunRequest(BaseModel):
+    """Payload for ``POST /embeddings/index/runs``: a batch of new documents."""
+
+    documents: list[Budget] = Field(
+        min_length=1, max_length=200, description="New budget documents to add to the corpus."
+    )
+    document_type: str = Field(
+        default="historical_budget",
+        min_length=1,
+        max_length=50,
+        description="Document family stamped on every new document.",
+    )
+    chunk_type: str = Field(
+        default="budget_component",
+        max_length=50,
+        description="chunk_type stamped on every new chunk (filterable).",
+    )
+
+
+class IndexRunResponse(BaseModel):
+    """Response of ``POST /embeddings/index/runs``. Returned with HTTP 202."""
+
+    job_id: uuid.UUID
+    documents_total: int = Field(ge=0, description="Documents submitted for indexing.")
+    status: Literal["pending", "running", "completed", "failed"]
+
+
+class IndexJobView(BaseModel):
+    """Response of ``GET /embeddings/index/jobs/{job_id}``: progress snapshot."""
+
+    job_id: uuid.UUID
+    status: Literal["pending", "running", "completed", "failed"]
+    documents_processed: int = Field(
+        ge=0, description="Documents processed so far (indexed + skipped duplicates)."
+    )
+    error_message: str | None = None
+    started_at: datetime
+    finished_at: datetime | None = None
+
+
+class CollectionStats(BaseModel):
+    """Corpus size + index state for one collection table."""
+
+    collection: str
+    documents: int = Field(ge=0, description="Distinct documents with chunks in this collection.")
+    chunks: int = Field(ge=0, description="Chunk rows in this collection.")
+    hnsw_indexed: bool = Field(description="Whether the collection carries an HNSW vector index.")
+
+
+class CorpusStats(BaseModel):
+    """Whole-corpus snapshot, per collection — surfaced so the UI shows growth."""
+
+    collections: list[CollectionStats] = Field(default_factory=list)
+    total_chunks: int = Field(ge=0)
 
 
 class SearchRequest(BaseModel):
@@ -417,6 +485,67 @@ class CitationReport(BaseModel):
         return bool(self.dangling_citations)
 
 
+# ---------------------------------------------------------------------------
+# Session 11 — semantic hallucination gate.
+#
+# verify_citations proves REFERENTIAL integrity (the cited chunk was retrieved).
+# It cannot prove the number is ENTAILED by that chunk: a line can cite a real
+# source and still invent its hours. The gate adds the semantic layer — a
+# deterministic numeric anchor + a strict judge — grading each grounded line
+# grounded / insufficient / degraded.
+# ---------------------------------------------------------------------------
+
+
+class LineVerdict(BaseModel):
+    """Strict-judge verdict for a single estimate line."""
+
+    module: str = Field(description="Module the line belongs to (echoed for matching).")
+    component: str = Field(description="The line (task) name (echoed for matching).")
+    entailed: bool = Field(
+        description="True iff the cited evidence supports the line's hours/scope."
+    )
+    reason: str = Field(description="One-sentence justification for the verdict.")
+
+
+LineGateStatus = Literal["grounded", "degraded", "insufficient"]
+
+
+class LineGate(BaseModel):
+    """Graded semantic-gate result for one estimate line."""
+
+    module: str
+    component: str
+    status: LineGateStatus = Field(
+        description="grounded = anchor and judge both accept the line; degraded = a "
+        "grounded line whose hours are not entailed by the cited evidence (numeric "
+        "anchor miss or judge rejection); insufficient = the line carried no data."
+    )
+    numeric_deviation: float | None = Field(
+        default=None,
+        ge=0.0,
+        description="Relative gap between the line's hours and the deterministic anchor "
+        "(|line - anchor| / anchor). None when no numeric anchor was available.",
+    )
+    reason: str = Field(default="", description="Why the line was degraded (empty when grounded).")
+
+
+class HallucinationReport(BaseModel):
+    """Aggregate of the semantic gate over an estimate's lines."""
+
+    total_lines: int = Field(ge=0)
+    grounded_lines: int = Field(ge=0, description="Lines the anchor and judge both accept.")
+    degraded_lines: int = Field(
+        ge=0, description="Lines that cite a real source but whose number it does not entail."
+    )
+    insufficient_lines: int = Field(ge=0, description="Lines flagged as no sufficient data.")
+    lines: list[LineGate] = Field(default_factory=list)
+
+    @property
+    def has_degraded(self) -> bool:
+        """True when any grounded line failed the semantic check."""
+        return self.degraded_lines > 0
+
+
 # ---- HTTP request models for the Session 9 routers ------------------------
 # Named ``RetrievalRequest``/``EstimateRequest`` (not ``SearchRequest``) to
 # avoid colliding with the Session 8 ``SearchRequest`` above.
@@ -475,6 +604,13 @@ class AssembleRequest(BaseModel):
 
     chunks: list[RetrievedChunk]
     max_context_tokens: int | None = Field(default=None, ge=256, le=64_000)
+    # Session 11 augmentation toggles (per request, so a demo can show the effect).
+    augment: bool = Field(
+        default=False,
+        description="Apply the Session 11 augmentation passes before assembly.",
+    )
+    compress: bool = Field(default=True, description="Compress each source to its key points.")
+    reorder: bool = Field(default=True, description="Edge-load reorder (lost-in-the-middle).")
 
 
 class AssembleResult(BaseModel):
@@ -485,6 +621,9 @@ class AssembleResult(BaseModel):
     kept_chunks: list[RetrievedChunk]
     dropped_count: int = Field(ge=0, description="Chunks dropped by the token budget.")
     token_count: int = Field(ge=0, description="Tokens in the assembled context block.")
+    augmented: bool = Field(
+        default=False, description="Whether the Session 11 augmentation passes ran."
+    )
 
 
 class StructureRequest(BaseModel):
@@ -531,6 +670,21 @@ class GenerateResult(BaseModel):
     coherent: bool = Field(description="False when an insufficient estimate still carries numbers.")
 
 
+class VerifyRequest(BaseModel):
+    """Payload for ``POST /v1/estimate/stages/verify`` (Session 11 semantic gate).
+
+    Takes a generated estimate and the chunks its context was built from, and
+    runs the deterministic anchor + strict judge over every grounded line."""
+
+    estimate: Estimate
+    kept_chunks: list[RetrievedChunk] = Field(default_factory=list)
+    use_judge: bool = Field(
+        default=True,
+        description="When False, only the deterministic numeric anchor runs (no LLM) — "
+        "useful for a fast, free demo of the gate's arithmetic half.",
+    )
+
+
 # ---------------------------------------------------------------------------
 # Session 10 — per-task hours estimation by vector search.
 #
@@ -549,6 +703,20 @@ class TaskNeighbor(BaseModel):
     budget_id: str | None = Field(default=None, description="Traceable parent corpus id.")
     estimated_hours: int = Field(ge=0, description="Hours recorded for this historical task.")
     distance: float = Field(description="Cosine distance to the query task (lower = closer).")
+
+
+class HourRange(BaseModel):
+    """A synthesized hour RANGE emitted when the historical sources contradict.
+
+    Session 11: a single weighted consensus hides disagreement (one source says
+    40h, another 90h → a misleading 65h point). When the neighbour dispersion
+    crosses the contradiction threshold, synthesis surfaces the spread as a range
+    plus the reason, instead of averaging the conflict away.
+    """
+
+    low: int = Field(ge=0, description="Low end of the plausible hours.")
+    high: int = Field(ge=0, description="High end of the plausible hours.")
+    reason: str = Field(description="Why the sources disagree (the conflict, named).")
 
 
 class TaskHoursEstimate(BaseModel):
@@ -578,6 +746,13 @@ class TaskHoursEstimate(BaseModel):
     )
     neighbors: list[TaskNeighbor] = Field(
         default_factory=list, description="The historical tasks the hours were derived from."
+    )
+    # Session 11: when the neighbours contradict beyond the dispersion threshold,
+    # synthesis surfaces the spread as a range with a reason instead of a point.
+    hours_range: HourRange | None = Field(
+        default=None,
+        description="Present only when the historical sources contradict; the point "
+        "``estimated_hours`` still carries the consensus for editing.",
     )
 
 

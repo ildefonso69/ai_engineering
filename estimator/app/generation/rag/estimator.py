@@ -21,6 +21,8 @@ import structlog
 from app.config import get_settings
 from app.generation.rag.context_assembler import build_context_block, truncate_to_token_budget
 from app.generation.rag.errors import GenerationError, MalformedEstimateError
+from app.generation.rag.quality.augmentation import augment_chunks
+from app.generation.rag.quality.hallucination import gate_estimate
 from app.generation.rag.observability import log_stage
 from app.generation.rag.prompt_builder import (
     build_structure_system_prompt,
@@ -252,9 +254,17 @@ async def estimate_from_transcript(
             await asyncio.to_thread(store.set, idempotency_key, estimate)
         return estimate
 
-    # 4. Truncate to the token budget (whole chunks only) + assemble context.
+    # 4. Truncate to the token budget (whole chunks only), augment, assemble.
+    #    Session 11 augmentation (compress → edge-load reorder) runs on the kept
+    #    chunks; it preserves ids, so citation verification below is unaffected.
     encoder = get_token_encoder()
     kept = truncate_to_token_budget(retrieval.chunks, settings.MAX_CONTEXT_TOKENS, encoder)
+    if runtime_retrieval.effective_augmentation():
+        kept = augment_chunks(
+            kept,
+            compress=settings.AUGMENTATION_COMPRESS,
+            reorder=settings.AUGMENTATION_REORDER,
+        )
     context_block = build_context_block(kept)
 
     # 5. Generate the grounded estimate.
@@ -290,6 +300,29 @@ async def estimate_from_transcript(
                 request_id=request_id,
                 dangling_citations=report.dangling_citations,
             )
+            estimate = estimate.model_copy(update={"confidence": "low"})
+
+    # 6.5 Semantic hallucination gate (Session 11): referential integrity is not
+    #     entailment. A deterministic numeric anchor + a strict judge grade every
+    #     grounded line; a line that claims more than its evidence supports is a
+    #     hallucination wearing a real citation → downgrade confidence.
+    if runtime_retrieval.effective_hallucination_gate():
+        with log_stage("hallucination_gate", request_id):
+            gate = await gate_estimate(
+                estimate,
+                kept,
+                tolerance=settings.HALLUCINATION_NUMERIC_TOLERANCE,
+                judge_model=settings.HALLUCINATION_JUDGE_MODEL,
+            )
+        log.info(
+            "hallucination_report",
+            request_id=request_id,
+            total_lines=gate.total_lines,
+            grounded_lines=gate.grounded_lines,
+            degraded_lines=gate.degraded_lines,
+            insufficient_lines=gate.insufficient_lines,
+        )
+        if gate.has_degraded and estimate.confidence in ("high", "medium"):
             estimate = estimate.model_copy(update={"confidence": "low"})
 
     # 7. Coherence guard: one repair attempt, then reject.

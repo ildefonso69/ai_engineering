@@ -79,13 +79,20 @@ en `evals/ragas_baseline_s11.json` (campo `citation_report` por query).
 > **Nota operativa**: `ragas 0.4.x` importa en carga `langchain_community.chat_models.vertexai`,
 > que el `langchain-community` actual del proyecto ya no expone. Por eso el scoring corre en un venv
 > aislado (`score_ragas_s11.py` registra un stub de Vertex, que nunca se instancia con juez OpenAI).
+> Crear el venv aislado **una sola vez** (desde `estimator/`; no toca el venv del proyecto):
+> ```bash
+> uv venv --python 3.11 .ragas-venv
+> uv pip install --python .ragas-venv/bin/python 'ragas>=0.4,<0.5' langchain-openai datasets pandas
+> ```
 > Flujo de dos pasos:
 > ```bash
 > # 1) recoger muestras con el pipeline real (venv del proyecto, stack arriba + corpus ingerido)
 > DATABASE_URL='postgresql+psycopg://estimator:estimator@localhost:5433/estimator' \
 >   uv run python scripts/eval_ragas_s11.py --collect-only samples.json
-> # 2) puntuar en venv aislado con ragas
-> /ruta/ragas-venv/bin/python scripts/score_ragas_s11.py samples.json --out evals/ragas_baseline_s11.json
+> # 2) puntuar en el venv aislado. El scorer usa ChatOpenAI/OpenAIEmbeddings y NO lee .env,
+> #    así que OPENAI_API_KEY debe estar exportada en el entorno.
+> export OPENAI_API_KEY=sk-...
+> .ragas-venv/bin/python scripts/score_ragas_s11.py samples.json --out evals/ragas_baseline_s11.json
 > ```
 
 ### Tabla de métricas (4 métricas × 5 consultas + promedio)

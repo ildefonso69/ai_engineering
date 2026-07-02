@@ -84,7 +84,12 @@ def generate_calls(monkeypatch):
     fake_runtime = type(
         "RT",
         (),
-        {"effective_search_mode": lambda self: "vector", "effective_rerank": lambda self: False},
+        {
+            "effective_search_mode": lambda self: "vector",
+            "effective_rerank": lambda self: False,
+            "effective_augmentation": lambda self: False,
+            "effective_hallucination_gate": lambda self: False,
+        },
     )()
     monkeypatch.setattr(orch, "get_settings", lambda: settings)
     monkeypatch.setattr(orch, "reformulate_query", fake_reformulate)

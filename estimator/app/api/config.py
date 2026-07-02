@@ -15,9 +15,12 @@ from pydantic import BaseModel, Field
 from app.config import Settings, get_settings
 from app.dependencies import get_runtime_config, get_runtime_retrieval_config
 from app.foundation.llm.runtime_config import (
+    AUGMENTATION_KEY,
+    HALLUCINATION_GATE_KEY,
     MODEL_KEYS,
     QUERY_TRANSFORM_KEY,
     ROUTING_KEY,
+    SYNTHESIS_KEY,
     TEMPORAL_DECAY_KEY,
     RuntimeConfigUnavailable,
     RuntimeModelConfig,
@@ -32,6 +35,10 @@ _STAGE_TOGGLE_KEYS = {
     "routing_enabled": ROUTING_KEY,
     "query_transform_enabled": QUERY_TRANSFORM_KEY,
     "temporal_decay_enabled": TEMPORAL_DECAY_KEY,
+    # Session 11 generation-quality toggles.
+    "hallucination_gate_enabled": HALLUCINATION_GATE_KEY,
+    "augmentation_enabled": AUGMENTATION_KEY,
+    "synthesis_enabled": SYNTHESIS_KEY,
 }
 
 router = APIRouter(prefix="/api/v1/config", tags=["config"])
@@ -91,6 +98,16 @@ class RetrievalUpdateRequest(BaseModel):
     )
     temporal_decay_enabled: bool | None = Field(
         default=None, description="Enable temporal decay re-weighting."
+    )
+    # Session 11 live: generation-quality stage toggles.
+    hallucination_gate_enabled: bool | None = Field(
+        default=None, description="Enable the semantic hallucination gate (anchor + judge)."
+    )
+    augmentation_enabled: bool | None = Field(
+        default=None, description="Enable context augmentation (compress + edge-load reorder)."
+    )
+    synthesis_enabled: bool | None = Field(
+        default=None, description="Enable two-stage hours synthesis (range on contradiction)."
     )
     # Session 10 live: per-task hours estimation knobs (numeric).
     task_hours_top_k: int | None = Field(

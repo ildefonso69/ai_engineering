@@ -31,6 +31,7 @@ from app.domain.estimation_service import EstimationService
 from app.foundation.llm.runtime_config import RuntimeModelConfig, RuntimeRetrievalConfig
 from app.foundation.llm.wrapper import LLMWrapper
 from app.foundation.persistence.database import get_async_session_factory
+from app.generation.rag.index_service import CorpusIndexService
 from app.generation.rag.ingest_service import RagIngestService
 from app.generation.rag.retriever import SemanticRetriever
 from app.generation.rag.store.repository import ChunkStore
@@ -139,6 +140,16 @@ def get_rag_ingest_service() -> RagIngestService | None:
         session_factory=get_async_session_factory(),
         store=get_chunk_store(),
     )
+
+
+@lru_cache
+def get_corpus_index_service() -> CorpusIndexService | None:
+    """Session 11 batch corpus expansion. ``None`` without an OpenAI key
+    (mirrors ``get_rag_ingest_service``); the router maps that to a 500."""
+    ingest = get_rag_ingest_service()
+    if ingest is None:
+        return None
+    return CorpusIndexService(ingest=ingest)
 
 
 @lru_cache

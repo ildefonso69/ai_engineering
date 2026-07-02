@@ -12,6 +12,7 @@ build/
 # Virtual environments
 .venv/
 venv/
+.ragas-venv/
 
 # Testing / linting caches
 .pytest_cache/

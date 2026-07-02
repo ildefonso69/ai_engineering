@@ -50,6 +50,9 @@ def test_get_returns_full_snapshot(client) -> None:
         "COMPRESSION_MODEL",
         "PROPOSITIONAL_CHUNKER_MODEL",
         "CONTEXTUAL_CHUNKER_MODEL",
+        # Session 11: the hallucination judge and the augmentation compressor.
+        "HALLUCINATION_JUDGE_MODEL",
+        "AUGMENTATION_MODEL",
     }
     assert "gpt-4o" in body["available_models"]
     assert "claude-sonnet-4-5" in body["available_models"]

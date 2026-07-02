@@ -33,6 +33,9 @@ MODEL_KEYS: tuple[str, ...] = (
     "COMPRESSION_MODEL",
     "PROPOSITIONAL_CHUNKER_MODEL",
     "CONTEXTUAL_CHUNKER_MODEL",
+    # Session 11: the strict hallucination judge and the augmentation compressor.
+    "HALLUCINATION_JUDGE_MODEL",
+    "AUGMENTATION_MODEL",
 )
 
 HASH_KEY = "estimator:runtime_config"
@@ -132,6 +135,11 @@ TEMPORAL_DECAY_KEY = "TEMPORAL_DECAY_ENABLED"
 # distance threshold is the red-flag floor the instructor calibrates mid-session.
 TASK_HOURS_TOP_K_KEY = "TASK_HOURS_TOP_K"
 TASK_HOURS_DISTANCE_THRESHOLD_KEY = "TASK_HOURS_DISTANCE_THRESHOLD"
+# Session 11 live: generation-quality stage toggles (same override pattern), so
+# the instructor flips the semantic gate, augmentation and synthesis from Ajustes.
+HALLUCINATION_GATE_KEY = "HALLUCINATION_GATE_ENABLED"
+AUGMENTATION_KEY = "AUGMENTATION_ENABLED"
+SYNTHESIS_KEY = "SYNTHESIS_ENABLED"
 RETRIEVAL_KEYS: tuple[str, ...] = (
     SEARCH_MODE_KEY,
     RERANK_KEY,
@@ -140,6 +148,9 @@ RETRIEVAL_KEYS: tuple[str, ...] = (
     TEMPORAL_DECAY_KEY,
     TASK_HOURS_TOP_K_KEY,
     TASK_HOURS_DISTANCE_THRESHOLD_KEY,
+    HALLUCINATION_GATE_KEY,
+    AUGMENTATION_KEY,
+    SYNTHESIS_KEY,
 )
 
 _VALID_SEARCH_MODES = ("vector", "hybrid")
@@ -201,6 +212,17 @@ class RuntimeRetrievalConfig:
     def effective_temporal_decay(self) -> bool:
         return self._effective_bool(TEMPORAL_DECAY_KEY, self._settings.TEMPORAL_DECAY_ENABLED)
 
+    def effective_hallucination_gate(self) -> bool:
+        return self._effective_bool(
+            HALLUCINATION_GATE_KEY, self._settings.HALLUCINATION_GATE_ENABLED
+        )
+
+    def effective_augmentation(self) -> bool:
+        return self._effective_bool(AUGMENTATION_KEY, self._settings.AUGMENTATION_ENABLED)
+
+    def effective_synthesis(self) -> bool:
+        return self._effective_bool(SYNTHESIS_KEY, self._settings.SYNTHESIS_ENABLED)
+
     def set_search_mode(self, value: str | None) -> None:
         if value is not None and value not in _VALID_SEARCH_MODES:
             raise ValueError(f"Invalid search mode: {value}")
@@ -210,8 +232,16 @@ class RuntimeRetrievalConfig:
         self._set_raw(RERANK_KEY, None if value is None else str(value).lower())
 
     def set_bool(self, key: str, value: bool | None) -> None:
-        """Set one of the Session 10 boolean stage toggles (routing/transform/decay)."""
-        if key not in (ROUTING_KEY, QUERY_TRANSFORM_KEY, TEMPORAL_DECAY_KEY):
+        """Set one boolean stage toggle (Session 10 routing/transform/decay or
+        Session 11 gate/augmentation/synthesis)."""
+        if key not in (
+            ROUTING_KEY,
+            QUERY_TRANSFORM_KEY,
+            TEMPORAL_DECAY_KEY,
+            HALLUCINATION_GATE_KEY,
+            AUGMENTATION_KEY,
+            SYNTHESIS_KEY,
+        ):
             raise ValueError(f"Unknown retrieval toggle: {key}")
         self._set_raw(key, None if value is None else str(value).lower())
 
@@ -287,5 +317,20 @@ class RuntimeRetrievalConfig:
                 "effective": self.effective_task_hours_distance_threshold(),
                 "default": self._settings.TASK_HOURS_DISTANCE_THRESHOLD,
                 "overridden": TASK_HOURS_DISTANCE_THRESHOLD_KEY in overrides,
+            },
+            HALLUCINATION_GATE_KEY: {
+                "effective": self.effective_hallucination_gate(),
+                "default": self._settings.HALLUCINATION_GATE_ENABLED,
+                "overridden": HALLUCINATION_GATE_KEY in overrides,
+            },
+            AUGMENTATION_KEY: {
+                "effective": self.effective_augmentation(),
+                "default": self._settings.AUGMENTATION_ENABLED,
+                "overridden": AUGMENTATION_KEY in overrides,
+            },
+            SYNTHESIS_KEY: {
+                "effective": self.effective_synthesis(),
+                "default": self._settings.SYNTHESIS_ENABLED,
+                "overridden": SYNTHESIS_KEY in overrides,
             },
         }

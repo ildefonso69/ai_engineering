@@ -49,6 +49,13 @@ class JobsRepository:
     def mark_running(self, job_id: uuid.UUID) -> None:
         self._update(job_id, status="running")
 
+    def set_documents_count(self, job_id: uuid.UUID, count: int) -> None:
+        """Update the running progress counter (documents processed so far).
+
+        Used by the Session 11 corpus-expansion job to report per-document
+        progress while it runs; the GET endpoint reads it for the UI poller."""
+        self._update(job_id, documents_count=count)
+
     def mark_completed(self, job_id: uuid.UUID, *, documents_count: int) -> None:
         self._update(
             job_id,

@@ -37,6 +37,8 @@ from app.dependencies import get_embedder, get_token_encoder
 from app.generation.rag.context_assembler import build_context_block, truncate_to_token_budget
 from app.generation.rag.errors import RagError, RetrievalError
 from app.generation.rag.estimator import generate_estimate, generate_structure
+from app.generation.rag.quality.augmentation import augment_chunks
+from app.generation.rag.quality.hallucination import gate_estimate
 from app.generation.rag.observability import log_stage
 from app.generation.rag.query_reformulator import compose_search_text, reformulate_query
 from app.generation.rag.retriever import search_chunks
@@ -45,11 +47,13 @@ from app.generation.rag.schemas import (
     AssembleResult,
     GenerateRequest,
     GenerateResult,
+    HallucinationReport,
     ReformulateRequest,
     ReformulationResult,
     RetrievalRequest,
     RetrievalResult,
     StructureRequest,
+    VerifyRequest,
 )
 from app.generation.rag.validation import check_coherence, verify_citations
 
@@ -129,8 +133,10 @@ async def assemble(request: Request, payload: AssembleRequest) -> AssembleResult
     budget = payload.max_context_tokens or settings.MAX_CONTEXT_TOKENS
     encoder = get_token_encoder()
 
-    with log_stage("augmentation", request_id, budget=budget):
+    with log_stage("augmentation", request_id, budget=budget, augment=payload.augment):
         kept = truncate_to_token_budget(payload.chunks, budget, encoder)
+        if payload.augment:
+            kept = augment_chunks(kept, compress=payload.compress, reorder=payload.reorder)
         context_block = build_context_block(kept)
         token_count = len(encoder.encode(context_block))
 
@@ -139,6 +145,7 @@ async def assemble(request: Request, payload: AssembleRequest) -> AssembleResult
         kept_chunks=kept,
         dropped_count=len(payload.chunks) - len(kept),
         token_count=token_count,
+        augmented=payload.augment,
     )
 
 
@@ -201,3 +208,32 @@ async def generate(request: Request, payload: GenerateRequest) -> GenerateResult
         citation_report=report,
         coherent=coherent,
     )
+
+
+@router.post(
+    "/verify",
+    response_model=HallucinationReport,
+    dependencies=[Depends(require_estimate_key)],
+)
+@limiter.limit("15/minute")
+async def verify(request: Request, payload: VerifyRequest) -> HallucinationReport:
+    """Stage 5 (Session 11) — semantic hallucination gate over a generated estimate.
+
+    Where ``/generate`` returns REFERENTIAL grounding (a cited id was retrieved),
+    this returns SEMANTIC grounding: a deterministic numeric anchor + a strict
+    judge grade each line grounded / degraded / insufficient. Reuses the same pure
+    functions the full pipeline runs at step 6.5 — no logic is re-implemented."""
+    request_id = get_request_id(request)
+    settings = get_settings()
+    try:
+        with log_stage("hallucination_gate", request_id, use_judge=payload.use_judge):
+            return await gate_estimate(
+                payload.estimate,
+                payload.kept_chunks,
+                tolerance=settings.HALLUCINATION_NUMERIC_TOLERANCE,
+                judge_model=settings.HALLUCINATION_JUDGE_MODEL,
+                use_judge=payload.use_judge,
+            )
+    except RagError as exc:
+        log.error("stage_failed", stage="hallucination_gate", error_type=type(exc).__name__)
+        raise HTTPException(status_code=502, detail="Hallucination gate failed.") from exc

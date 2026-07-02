@@ -15,6 +15,7 @@ from app.api.rate_limiting import limiter, rate_limit_exceeded_handler
 from app.api.routers.estimate import router as estimate_router
 from app.api.routers.estimate_stages import router as estimate_stages_router
 from app.api.routers.estimate_tasks import router as estimate_tasks_router
+from app.api.routers.corpus_index import router as corpus_index_router
 from app.api.routers.retrieval import router as retrieval_router
 from app.api.routers.retrieval_advanced import router as retrieval_advanced_router
 
@@ -113,6 +114,7 @@ app.include_router(estimations.router)
 app.include_router(sessions.router)
 app.include_router(ingestion.router)
 app.include_router(embeddings_router)
+app.include_router(corpus_index_router)
 app.include_router(search_router)
 app.include_router(config_api.router)
 # Session 9 — RAG retrieval + grounded estimation (each independently secured).

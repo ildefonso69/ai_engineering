@@ -14,11 +14,17 @@ table so all Session 8/9 callers are unaffected.
 from __future__ import annotations
 
 from pgvector.sqlalchemy import HALFVEC
-from sqlalchemy import Integer, Row, cast, func, select
+from sqlalchemy import Integer, Row, cast, func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.generation.rag.schemas import EmbeddedChunk
-from app.generation.rag.store.models import BudgetChunkRow, DocumentRow, EMBEDDING_DIMENSIONS
+from app.generation.rag.store.models import (
+    BudgetChunkRow,
+    DocumentRow,
+    EMBEDDING_DIMENSIONS,
+    TechnicalDocChunkRow,
+    TranscriptChunkRow,
+)
 
 # The structural chunker emits one chunk per budget component; the vocabulary
 # is queryable thanks to the index on ``chunk_type`` (live-session filters).
@@ -33,6 +39,34 @@ class ChunkStore:
         or ``None``. Backs the application-level 409 duplicate guard."""
         stmt = select(DocumentRow.id).where(DocumentRow.source_path == source_path)
         return (await session.execute(stmt)).scalar_one_or_none()
+
+    async def corpus_stats(self, session: AsyncSession) -> list[tuple[str, int, int, bool]]:
+        """Per-collection ``(name, documents, chunks, hnsw_indexed)`` snapshot.
+
+        Backs the Session 11 corpus-expansion UI: it shows the corpus growing
+        and whether each collection carries a vector index. Documents are counted
+        as the distinct parent documents that own chunks in the collection."""
+        collections = (
+            ("budget", BudgetChunkRow),
+            ("transcript", TranscriptChunkRow),
+            ("technical_doc", TechnicalDocChunkRow),
+        )
+        index_exists_stmt = text(
+            "SELECT EXISTS (SELECT 1 FROM pg_indexes WHERE indexname = :name)"
+        )
+        out: list[tuple[str, int, int, bool]] = []
+        for name, model in collections:
+            chunks = (await session.execute(select(func.count()).select_from(model))).scalar_one()
+            documents = (
+                await session.execute(select(func.count(func.distinct(model.document_id))))
+            ).scalar_one()
+            indexed = (
+                await session.execute(
+                    index_exists_stmt, {"name": f"ix_{model.__tablename__}_embedding_hnsw"}
+                )
+            ).scalar_one()
+            out.append((name, int(documents), int(chunks), bool(indexed)))
+        return out
 
     async def persist_document_with_chunks(
         self,

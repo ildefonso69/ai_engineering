@@ -183,6 +183,38 @@ class Settings(BaseSettings):
     # this gets NO hours (red flag in the UI) instead of a low-confidence guess.
     TASK_HOURS_DISTANCE_THRESHOLD: float = 0.45
 
+    # --- Session 11 live fields (generation quality: hallucination gate) --------
+    # A SEMANTIC layer on top of the referential citation check (verify_citations):
+    # verify_citations proves every cited chunk_id was retrieved; the gate proves
+    # the number is ENTAILED by that chunk. A deterministic numeric anchor + a
+    # strict LLM judge grade each grounded line grounded / insufficient / degraded.
+    # Switchable at runtime (RuntimeRetrievalConfig → Ajustes UI).
+    HALLUCINATION_GATE_ENABLED: bool = True
+    # The strict judge that checks a line's cited evidence entails its number. A
+    # cheap model is enough; in AVAILABLE_MODELS, so switchable in the Ajustes tab.
+    HALLUCINATION_JUDGE_MODEL: str = "gpt-5-mini"
+    # Relative tolerance for the numeric anchor: a grounded line whose hours deviate
+    # from the historical anchor by more than this fraction is degraded (0.5 = ±50%).
+    HALLUCINATION_NUMERIC_TOLERANCE: float = 0.5
+
+    # --- Session 11 live fields (augmentation + synthesis) ----------------------
+    # Input-quality layer applied to the retrieved chunks BEFORE generation:
+    # compress each source to its key points and reorder with edge-loading
+    # (most-relevant first AND last) against lost-in-the-middle. Both switchable
+    # at runtime; the reorder is a pure, free transform, the compression optional.
+    AUGMENTATION_ENABLED: bool = True
+    AUGMENTATION_COMPRESS: bool = True
+    AUGMENTATION_REORDER: bool = True
+    # Cheap model for the optional LLM compression (extractive compression needs
+    # none). In AVAILABLE_MODELS.
+    AUGMENTATION_MODEL: str = "gpt-5-mini"
+    # Two-stage synthesis of the per-task hours: a deterministic anchor + model
+    # judgement. When the historical sources disagree beyond this dispersion
+    # (coefficient of variation, e.g. one says 40h and another 90h), emit an hour
+    # RANGE with a reason instead of a single point. Switchable at runtime.
+    SYNTHESIS_ENABLED: bool = True
+    SYNTHESIS_CONTRADICTION_THRESHOLD: float = 0.35
+
     @model_validator(mode="after")
     def validate_at_least_one_api_key(self) -> "Settings":
         """LiteLLM may try either provider via fallback, so we require at least one key."""

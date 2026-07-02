@@ -120,6 +120,8 @@ def wire(monkeypatch):
         fake_runtime = SimpleNamespace(
             effective_search_mode=lambda: "vector",
             effective_rerank=lambda: False,
+            effective_augmentation=lambda: False,
+            effective_hallucination_gate=lambda: False,
         )
 
         monkeypatch.setattr(orch, "get_settings", lambda: _SETTINGS)
