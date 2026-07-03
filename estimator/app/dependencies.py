@@ -7,7 +7,7 @@ from functools import lru_cache
 import anthropic
 import redis
 import structlog
-from openai import OpenAI
+from openai import AsyncOpenAI, OpenAI
 
 from app.generation.cag.semantic import EstimationSemanticCache
 from app.config import get_settings
@@ -98,6 +98,22 @@ def get_openai_client() -> OpenAI | None:
     if not settings.OPENAI_API_KEY:
         return None
     return OpenAI(api_key=settings.OPENAI_API_KEY)
+
+
+@lru_cache
+def get_async_openai_client() -> AsyncOpenAI | None:
+    """Lazy async OpenAI client for the Session 12 agentic loop.
+
+    The agent (``app/generation/agentic/agent_loop.py``) drives the raw Responses
+    API (``client.responses.create``) with ``await``, alongside the async
+    ``retrieve()`` its ``search_budgets`` tool wraps — so it needs an async client,
+    not the sync one used by moderation/embeddings. Returns ``None`` when no
+    OpenAI key is configured (the agent needs OpenAI specifically for the
+    Responses API)."""
+    settings = get_settings()
+    if not settings.OPENAI_API_KEY:
+        return None
+    return AsyncOpenAI(api_key=settings.OPENAI_API_KEY)
 
 
 @lru_cache

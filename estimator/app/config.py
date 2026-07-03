@@ -215,6 +215,25 @@ class Settings(BaseSettings):
     SYNTHESIS_ENABLED: bool = True
     SYNTHESIS_CONTRADICTION_THRESHOLD: float = 0.35
 
+    # --- Session 12 fields (hand-written agentic layer) -------------------------
+    # The agent drives a MANUAL tool loop over the raw OpenAI Responses API
+    # (client.responses.create) — the one deliberate exception to the "everything
+    # goes through LLMWrapper" rule, because the whole point of the exercise is to
+    # see the reason→act→observe loop by hand. These are plain defaults; the demo
+    # script (scripts/run_agent_s12.py) overrides them per invocation via CLI flags
+    # (cheap gpt-5-mini for loop debugging, gpt-5 for the real run). No runtime
+    # config: there is no live endpoint this session, only the script.
+    AGENT_MODEL: str = "gpt-5"
+    AGENT_REASONING_EFFORT: Literal["minimal", "low", "medium", "high"] = "medium"
+    # Safeguard against a runaway loop, on top of the natural stop (a turn with no
+    # more tool calls). One iteration == one Responses API round-trip.
+    AGENT_MAX_ITERATIONS: int = 10
+    # Retrieval knobs the search_budgets tool passes to retrieve(). Looser than the
+    # RAG defaults on purpose: the agent issues many narrow per-component queries and
+    # benefits from a few more candidates each.
+    AGENT_SEARCH_TOP_K: int = 5
+    AGENT_SEARCH_DISTANCE_THRESHOLD: float = 0.6
+
     @model_validator(mode="after")
     def validate_at_least_one_api_key(self) -> "Settings":
         """LiteLLM may try either provider via fallback, so we require at least one key."""
