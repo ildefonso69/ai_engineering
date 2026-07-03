@@ -17,7 +17,7 @@ module Rag
     attribute :rate_eur_per_hour, :integer
     attribute :has_match, :boolean, default: true
 
-    attr_reader :sources
+    attr_reader :sources, :hours_range
 
     def self.from_hash(hash)
       new(hash || {})
@@ -25,14 +25,23 @@ module Rag
 
     def initialize(attributes = {})
       stringified = (attributes || {}).transform_keys(&:to_s)
-      @sources = Array(stringified.delete("sources")).map(&:to_i)
+      # Session 11: per-line citations are SourceReference hashes {chunk_id,
+      # document_id, evidence}; tolerate the legacy Session 9 list-of-ints too.
+      @sources = Array(stringified.delete("sources")).map do |s|
+        s.is_a?(Hash) ? s.transform_keys(&:to_s)["chunk_id"].to_s : s.to_s
+      end
+      # Session 11: a contradictory-sources hours range {low, high, reason}.
+      @hours_range = Rag::HourRangeView.from_hash(stringified.delete("hours_range"))
       super(stringified.slice(
         "name", "description", "engineer_days",
         "estimated_hours", "rate_eur_per_hour", "hours_reliability", "has_match"
       ))
     end
 
-    def sources_label = sources.join(", ")
+    def sources_label = sources.reject(&:blank?).join(", ")
+
+    # Session 11: the historical sources disagreed, so the hours are a range.
+    def contradicted? = hours_range&.present?
 
     # Red flag: no historical analog was found, so no hours were derived.
     def flagged? = has_match == false

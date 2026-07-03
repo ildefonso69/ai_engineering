@@ -154,7 +154,9 @@ class RagEstimationRunsControllerTest < ActionDispatch::IntegrationTest
     assert_equal 2, run.adjusted_modules.first.tasks.size
     assert_equal 50, run.adjusted_total_hours # 40 + 10
     assert_equal 3800, run.adjusted_total_cost # 40*80 + 10*60
-    assert_equal [ 1, 2 ], run.adjusted_modules.first.tasks.first.sources
+    # Session 11: TaskItemView normalises citations to string chunk_ids
+    # (SourceReference), tolerating the legacy integer form on the way in.
+    assert_equal [ "1", "2" ], run.adjusted_modules.first.tasks.first.sources
     assert run.confirmed?
   end
 

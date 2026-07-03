@@ -177,6 +177,9 @@ module Rag
             "estimated_hours" => hit["estimated_hours"],
             "hours_reliability" => hit["reliability"],
             "has_match" => matched,
+            # Session 11: carry the contradictory-sources range so the hours
+            # screen can flag it (nil when the analogs agreed).
+            "hours_range" => hit["hours_range"],
             "rate_eur_per_hour" => DEFAULT_RATE_EUR_PER_HOUR
           }
         end

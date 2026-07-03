@@ -17,6 +17,8 @@ module Rag
 
     def flagged_count = tasks.count(&:flagged?)
 
+    def contradicted_count = tasks.count(&:contradicted?)
+
     def total_count = tasks.size
   end
 end

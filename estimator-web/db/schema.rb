@@ -10,7 +10,7 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[8.0].define(version: 2026_06_25_120000) do
+ActiveRecord::Schema[8.0].define(version: 2026_07_02_120000) do
   # These are extensions that must be enabled in order to support this database
   enable_extension "pg_catalog.plpgsql"
 
@@ -68,6 +68,19 @@ ActiveRecord::Schema[8.0].define(version: 2026_06_25_120000) do
     t.bigint "chat_session_id"
     t.index ["chat_session_id"], name: "index_estimations_on_chat_session_id"
     t.index ["created_at"], name: "index_estimations_on_created_at"
+  end
+
+  create_table "index_runs", force: :cascade do |t|
+    t.string "job_id", null: false
+    t.string "chunk_type", default: "budget_component", null: false
+    t.integer "submitted_count", default: 0, null: false
+    t.string "status", default: "pending", null: false
+    t.integer "documents_processed", default: 0, null: false
+    t.jsonb "before_stats", default: {}, null: false
+    t.jsonb "after_stats", default: {}, null: false
+    t.datetime "created_at", null: false
+    t.datetime "updated_at", null: false
+    t.index ["job_id"], name: "index_index_runs_on_job_id"
   end
 
   add_foreign_key "estimations", "chat_sessions"

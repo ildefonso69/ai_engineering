@@ -52,6 +52,37 @@
       </div>
     <% end %>
 
+    <%# Session 11 · verificación de citaciones a nivel de línea (integridad referencial). %>
+    <% if (cr = view.citation_report) %>
+      <div class="p-4 rounded-md bg-ink/30 border border-white/10 mb-5">
+        <div class="text-xs uppercase tracking-tight text-white/50 font-bold mb-2">Verificación de citaciones (por línea)</div>
+        <div class="flex flex-wrap gap-2 text-xs">
+          <span class="px-2 py-1 rounded bg-success/15 text-success-light font-bold"><%= cr.grounded_lines %> grounded</span>
+          <span class="px-2 py-1 rounded <%= cr.has_dangling? ? "bg-danger/20 text-danger" : "bg-ink/50 text-white/50" %> font-bold"><%= cr.dangling_lines %> colgantes</span>
+          <span class="px-2 py-1 rounded bg-brand/15 text-brand-soft font-bold"><%= cr.insufficient_lines %> sin datos</span>
+          <span class="px-2 py-1 rounded bg-ink/50 text-white/60"><%= cr.verified_citations %> citas verificadas</span>
+        </div>
+        <% if cr.has_dangling? %>
+          <p class="text-xs text-danger mt-2">Ids colgantes (nunca recuperados): <%= cr.dangling_citations.join(", ") %></p>
+        <% end %>
+      </div>
+    <% end %>
+
+    <%# Session 11 · gate semántico de alucinaciones (¿la cifra se deduce de la cita?). %>
+    <% if (hr = view.hallucination_report) %>
+      <div class="p-4 rounded-md <%= hr.has_degraded? ? "bg-danger/10 border border-danger/40" : "bg-ink/30 border border-white/10" %> mb-5">
+        <div class="text-xs uppercase tracking-tight text-white/50 font-bold mb-2">Gate semántico (anclaje + juez)</div>
+        <div class="flex flex-wrap gap-2 text-xs mb-2">
+          <span class="px-2 py-1 rounded bg-success/15 text-success-light font-bold"><%= hr.grounded_lines %> grounded</span>
+          <span class="px-2 py-1 rounded <%= hr.has_degraded? ? "bg-danger/20 text-danger" : "bg-ink/50 text-white/50" %> font-bold"><%= hr.degraded_lines %> degradadas</span>
+          <span class="px-2 py-1 rounded bg-brand/15 text-brand-soft font-bold"><%= hr.insufficient_lines %> sin datos</span>
+        </div>
+        <% hr.lines.select(&:degraded?).each do |ln| %>
+          <p class="text-xs text-danger">• <%= ln.module_name %> / <%= ln.component %>: <%= ln.reason %></p>
+        <% end %>
+      </div>
+    <% end %>
+
     <% if estimate.insufficient? %>
       <div class="p-5 rounded-md bg-ink/40 border border-white/10">
         <span class="text-xs font-bold tracking-tight uppercase bg-brand text-ink-dark px-2 py-1 rounded">insufficient</span>

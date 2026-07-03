@@ -24,6 +24,11 @@
         🔴 <%= hours.flagged_count %> sin dato
       </span>
     <% end %>
+    <% if hours.contradicted_count.positive? %>
+      <span class="px-3 py-1.5 rounded-md bg-amber-400/15 border border-amber-400/50 text-amber-300 font-bold">
+        ⚠ <%= hours.contradicted_count %> con fuentes en conflicto
+      </span>
+    <% end %>
     <span class="px-3 py-1.5 rounded-md bg-ink/40 border border-white/10 text-white/60">
       <%= hours.total_count %> tareas
     </span>
@@ -45,9 +50,17 @@
                   <div class="text-white/50 text-xs mt-0.5"><%= task.description %></div>
                 <% end %>
               </td>
-              <td class="p-3 text-right align-top tabular-nums w-24">
+              <td class="p-3 text-right align-top tabular-nums w-40">
                 <% if task.flagged? %>
                   <span class="text-danger font-bold">🔴 —</span>
+                <% elsif task.contradicted? %>
+                  <%# Session 11: sources disagreed → show the range, not a false point. %>
+                  <span class="text-amber-300 font-bold" title="<%= task.hours_range.reason %>">
+                    ⚠ <%= task.hours_range.label %>
+                  </span>
+                  <div class="text-white/40 text-[11px] font-normal normal-case mt-0.5 max-w-48 ml-auto leading-tight">
+                    consenso <%= task.estimated_hours %> h · <%= task.hours_range.reason %>
+                  </div>
                 <% else %>
                   <span class="text-white font-bold"><%= task.estimated_hours %></span> <span class="text-white/40 text-xs">h</span>
                 <% end %>

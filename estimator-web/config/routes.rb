@@ -27,6 +27,12 @@ Rails.application.routes.draw do
   namespace :rag do
     resources :chunking_comparisons, only: [ :index, :new, :create, :show ]
 
+    # Corpus / Índice (Session 11): add new information to the vector DB and poll
+    # the async indexing job until the corpus grows.
+    resources :index_runs, only: [ :index, :new, :create, :show ] do
+      member { get :status }
+    end
+
     resources :estimation_runs, only: [ :index, :new, :create, :show ] do
       member do
         post  :reformulate
