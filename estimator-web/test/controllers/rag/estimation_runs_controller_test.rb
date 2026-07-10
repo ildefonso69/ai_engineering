@@ -59,16 +59,17 @@ class RagEstimationRunsControllerTest < ActionDispatch::IntegrationTest
     end
   end
 
-  # --- generate (structure-only, no RAG) -------------------------------------
+  # --- generate (S12 agent proposes the structure) ---------------------------
 
-  def stub_structure(estimate:)
-    stub_request(:post, %r{#{STAGES}/structure})
-      .to_return(status: 200,
-                 body: { estimate: estimate, fabricated_source_ids: [], coherent: true }.to_json,
+  def stub_structure(estimate:, agent_trace: nil)
+    body = { estimate: estimate, fabricated_source_ids: [], coherent: true }
+    body[:agent_trace] = agent_trace if agent_trace
+    stub_request(:post, %r{/v1/estimate/agent/structure})
+      .to_return(status: 200, body: body.to_json,
                  headers: { "Content-Type" => "application/json" })
   end
 
-  test "generate produces a structure-only tree (no RAG) and routes to human review" do
+  test "generate has the agent propose a structure-only tree and routes to human review" do
     run = run_with_reformulation
     estimate = {
       "total_engineer_days" => nil, "confidence" => "high", "reasoning" => "decomposed from the brief",
@@ -78,24 +79,33 @@ class RagEstimationRunsControllerTest < ActionDispatch::IntegrationTest
       ],
       "sources" => [], "assumptions" => []
     }
-    stub = stub_structure(estimate: estimate)
+    stub = stub_structure(
+      estimate: estimate,
+      agent_trace: { steps: [ { step: 1, tool: "propose_structure",
+        tool_args: { modules: 2 }, observation: "2 modules / 2 tasks" } ] }
+    )
 
     post generate_rag_estimation_run_path(run), params: {}
     run.reload
-    # The wizard calls the ungrounded structure endpoint, not the grounded generate.
+    # The wizard calls the AGENT structure endpoint, not the deterministic stage.
+    assert_requested(:post, %r{/v1/estimate/agent/structure}, headers: { "X-API-Key" => "test-estimate-key" })
     assert_requested stub
     # The editable STRUCTURE is seeded (no hours yet); not the cost breakdown.
     assert_equal 2, run.structure_modules.size
     assert_not run.adjusted?
     assert_equal "generated", run.status
+    # The agent's decomposition trace rode along in the generation JSONB.
+    assert_equal "propose_structure", run.generation_agent_trace.steps.first.tool
     assert_redirected_to rag_estimation_run_path(run, step: "review")
   end
 
-  # --- estimate_hours (per-task vector search) --------------------------------
+  # --- estimate_hours (deterministic per-task search + agent recovery) --------
 
-  def stub_task_hours(tasks:)
-    stub_request(:post, %r{/v1/estimate/tasks/hours})
-      .to_return(status: 200, body: { tasks: tasks }.to_json,
+  def stub_task_hours(tasks:, agent_trace: nil)
+    body = { tasks: tasks }
+    body[:agent_trace] = agent_trace if agent_trace
+    stub_request(:post, %r{/v1/estimate/agent/hours})
+      .to_return(status: 200, body: body.to_json,
                  headers: { "Content-Type" => "application/json" })
   end
 
@@ -111,13 +121,14 @@ class RagEstimationRunsControllerTest < ActionDispatch::IntegrationTest
 
     patch_params = {
       modules: { "0" => { name: "Auth", description: "Access", tasks: {
-        "0" => { name: "OAuth", sources: "1" },
-        "1" => { name: "RBAC", sources: "" }
+        "0" => { name: "OAuth" },
+        "1" => { name: "RBAC" }
       } } }
     }
     post estimate_hours_rag_estimation_run_path(run), params: patch_params
     run.reload
 
+    assert_requested(:post, %r{/v1/estimate/agent/hours}, headers: { "X-API-Key" => "test-estimate-key" })
     assert_requested stub
     assert_equal 2, run.task_hours_view.total_count
     assert_equal 1, run.task_hours_view.flagged_count
@@ -141,9 +152,9 @@ class RagEstimationRunsControllerTest < ActionDispatch::IntegrationTest
     patch verify_rag_estimation_run_path(run), params: {
       modules: {
         "0" => { name: "Auth", description: "Access", tasks: {
-          "0" => { name: "OAuth", estimated_hours: "40", rate_eur_per_hour: "80", sources: "1, 2" },
-          "1" => { name: "RBAC", estimated_hours: "10", rate_eur_per_hour: "60", sources: "" },
-          "2" => { name: "", estimated_hours: "99", rate_eur_per_hour: "99", sources: "" } # blank task dropped
+          "0" => { name: "OAuth", estimated_hours: "40", rate_eur_per_hour: "80" },
+          "1" => { name: "RBAC", estimated_hours: "10", rate_eur_per_hour: "60" },
+          "2" => { name: "", estimated_hours: "99", rate_eur_per_hour: "99" } # blank task dropped
         } },
         "1" => { name: "", tasks: {} } # blank module dropped
       }
@@ -154,18 +165,15 @@ class RagEstimationRunsControllerTest < ActionDispatch::IntegrationTest
     assert_equal 2, run.adjusted_modules.first.tasks.size
     assert_equal 50, run.adjusted_total_hours # 40 + 10
     assert_equal 3800, run.adjusted_total_cost # 40*80 + 10*60
-    # Session 11: TaskItemView normalises citations to string chunk_ids
-    # (SourceReference), tolerating the legacy integer form on the way in.
-    assert_equal [ "1", "2" ], run.adjusted_modules.first.tasks.first.sources
     assert run.confirmed?
   end
 
   # --- error mapping ---------------------------------------------------------
 
-  test "a 502 from a stage surfaces as a flash on redirect" do
+  test "a 502 from the agent structure phase surfaces as a flash on redirect" do
     run = run_with_reformulation
-    stub_request(:post, %r{#{STAGES}/structure})
-      .to_return(status: 502, body: { detail: "Structure generation failed." }.to_json,
+    stub_request(:post, %r{/v1/estimate/agent/structure})
+      .to_return(status: 502, body: { detail: "Failed to propose the structure." }.to_json,
                  headers: { "Content-Type" => "application/json" })
     post generate_rag_estimation_run_path(run), params: {}
     assert_response :redirect
@@ -229,6 +237,46 @@ class RagEstimationRunsControllerTest < ActionDispatch::IntegrationTest
     assert_response :success
     assert_match "Citaciones inventadas", response.body
     assert_match "999", response.body
+  end
+
+  # --- agent profile forwarding (S12) ----------------------------------------
+
+  test "generate forwards the selected profile's overrides + persona to the agent" do
+    run = run_with_reformulation
+    profile = Agents::Profile.create!(
+      name: "Veloz", persona: "Ve al grano.",
+      config: { "model" => "gpt-5-mini", "reasoning_effort" => "low", "max_iterations" => "6" }
+    )
+    captured_body = nil
+    stub_request(:post, %r{/v1/estimate/agent/structure})
+      .with { |req| captured_body = JSON.parse(req.body); true }
+      .to_return(status: 200, body: {
+        estimate: { "confidence" => "high", "reasoning" => "r", "modules" => [],
+                    "sources" => [], "assumptions" => [] },
+        fabricated_source_ids: [], coherent: true
+      }.to_json, headers: { "Content-Type" => "application/json" })
+
+    post generate_rag_estimation_run_path(run), params: { profile_id: profile.id }
+
+    assert_equal "gpt-5-mini", captured_body["model"]
+    assert_equal "low", captured_body["reasoning_effort"]
+    assert_equal 6, captured_body["max_iterations"]
+    assert_equal "Ve al grano.", captured_body["persona"]
+    assert captured_body.key?("query")
+  end
+
+  test "estimate_hours surfaces a guardrail rejection as a flash" do
+    run = Rag::EstimationRun.create!(transcript: "x" * 150,
+      structure: { "modules" => [ { "name" => "Auth", "tasks" => [ { "name" => "OAuth" } ] } ] })
+    stub_request(:post, %r{/v1/estimate/agent/hours})
+      .to_return(status: 400,
+                 body: { detail: { reason: "prompt_injection", message: "ignore instructions" } }.to_json,
+                 headers: { "Content-Type" => "application/json" })
+    post estimate_hours_rag_estimation_run_path(run), params: {
+      modules: { "0" => { name: "Auth", tasks: { "0" => { name: "OAuth" } } } }
+    }
+    assert_redirected_to rag_estimation_run_path(run, step: run.current_step)
+    assert_match(/guardarra/i, flash[:alert])
   end
 
   # --- index -----------------------------------------------------------------

@@ -15,22 +15,13 @@ class RagSession11ViewsTest < ActiveSupport::TestCase
     assert_nil Rag::HourRangeView.from_hash({})
   end
 
-  test "task item view surfaces a contradiction range and citation ids" do
+  test "task item view surfaces a contradiction range" do
     task = Rag::TaskItemView.from_hash(
       "name" => "Notifications", "estimated_hours" => 65, "has_match" => true,
-      "hours_range" => { "low" => 40, "high" => 90, "reason" => "scope differs" },
-      "sources" => [{ "chunk_id" => "101", "document_id" => "BUD-1", "evidence" => "40 h" }]
+      "hours_range" => { "low" => 40, "high" => 90, "reason" => "scope differs" }
     )
     assert task.contradicted?
     assert_equal "40–90 h", task.hours_range.label
-    # Session 11 SourceReference hashes → chunk_id labels, not the legacy int cast.
-    assert_equal "101", task.sources_label
-  end
-
-  test "task item view tolerates legacy integer sources" do
-    task = Rag::TaskItemView.from_hash("name" => "X", "sources" => [1, 2])
-    assert_equal "1, 2", task.sources_label
-    assert_not task.contradicted?
   end
 
   test "citation report view flags dangling citations" do

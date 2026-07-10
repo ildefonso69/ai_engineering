@@ -1,0 +1,42 @@
+<%# Session 12 — pick the agent profile (model / effort / persona / search knobs)
+    that drives this phase. Posts ``profile_id`` inside the phase form; the
+    controller falls back to the handwritten default when left blank. %>
+<% profiles = Agents::Profile.where(agent_type: "handwritten").order(:name) %>
+<% default_profile = profiles.find(&:is_default?) %>
+<% avatar_urls = profiles.each_with_object({}) do |p, h|
+     h[p.id.to_s] = rails_blob_path(p.avatar, only_path: true) if p.avatar.attached?
+   end %>
+<div class="mb-4 max-w-md">
+  <label class="block text-xs uppercase tracking-tight text-white/50 font-bold mb-1">Perfil del agente</label>
+  <% if profiles.any? %>
+    <div data-controller="agent-avatar" data-agent-avatar-avatars-value="<%= avatar_urls.to_json %>"
+         class="flex items-center gap-3">
+      <%# Preview del perfil SELECCIONADO (el select no puede mostrar imágenes). %>
+      <img data-agent-avatar-target="image"
+           src="<%= default_profile&.id && avatar_urls[default_profile.id.to_s] %>"
+           class="h-10 w-10 rounded-full object-cover border border-white/20 shrink-0 <%= "hidden" unless default_profile&.id && avatar_urls[default_profile.id.to_s] %>"
+           alt="Avatar del perfil seleccionado">
+      <div data-agent-avatar-target="placeholder"
+           class="h-10 w-10 rounded-full bg-ink/60 border border-white/10 flex items-center justify-center text-white/40 text-sm shrink-0 <%= "hidden" if default_profile&.id && avatar_urls[default_profile.id.to_s] %>">
+        🤖
+      </div>
+      <%= select_tag :profile_id,
+            options_for_select(
+              [ [ "Configuración por defecto del servicio", "" ] ] +
+                profiles.map { |p| [ p.is_default? ? "#{p.name} (default)" : p.name, p.id ] },
+              default_profile&.id
+            ),
+            data: { agent_avatar_target: "select", action: "change->agent-avatar#update" },
+            class: "flex-1 border border-white/20 rounded-md p-2.5 text-sm text-white bg-ink/40 focus:outline-none focus:border-brand focus:ring-2 focus:ring-brand [&>option]:bg-ink-dark [&>option]:text-white" %>
+    </div>
+    <p class="text-white/40 text-xs mt-1">
+      Modelo, effort, iteraciones, persona e imagen se gestionan en
+      <%= link_to "Agentes", agents_profiles_path, class: "text-brand hover:text-brand-soft font-bold" %>.
+    </p>
+  <% else %>
+    <p class="text-white/40 text-xs">
+      Sin perfiles: el agente usa la configuración por defecto del servicio.
+      Crea uno en <%= link_to "Agentes", agents_profiles_path, class: "text-brand hover:text-brand-soft font-bold" %>.
+    </p>
+  <% end %>
+</div>

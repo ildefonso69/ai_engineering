@@ -34,6 +34,14 @@
     </span>
   </div>
 
+  <%# Session 12 · the agent's recovery trace: it re-searched only the tasks the
+      deterministic pass could not ground. Empty steps = nothing needed recovery. %>
+  <% if (trace = run.hours_agent_trace) %>
+    <%= render "agent_trace", trace: trace,
+          title: "Traza del agente · recuperación de tareas sin dato",
+          empty_message: "El pase determinista encontró análogo para cada tarea — el agente no tuvo que recuperar ninguna." %>
+  <% end %>
+
   <% modules.each do |mod| %>
     <div class="rounded-md border border-white/10 overflow-hidden mb-4">
       <div class="flex items-center justify-between bg-ink/40 px-3 py-2">

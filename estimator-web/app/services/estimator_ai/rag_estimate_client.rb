@@ -50,5 +50,26 @@ module EstimatorAi
       payload = { transcript: transcript, idempotency_key: idempotency_key }.compact
       handle_response(json_conn.post("/v1/estimate/from-transcript", payload))
     end
+
+    # Session 12 — the hand-written agent drives the SAME two wizard phases as the
+    # deterministic path above, around the human review gate. Both return the same
+    # shapes as their deterministic siblings (so the views parse them unchanged),
+    # plus an ``agent_trace``. ``config`` carries an agent profile's per-run
+    # overrides; ``persona`` is appended to the agent system prompt. Blank values
+    # are dropped so the service defaults win.
+
+    # Phase 1 — the agent proposes the module→task structure (same shape as
+    # #generate_structure, plus agent_trace).
+    def agent_generate_structure(query:, config: {}, persona: nil)
+      body = { query: query, persona: persona }.merge(config || {}).compact
+      handle_response(json_conn.post("/v1/estimate/agent/structure", body))
+    end
+
+    # Phase 2 — deterministic per-task hours, then agent recovery on the tasks it
+    # could not ground (same shape as #estimate_task_hours, plus agent_trace).
+    def agent_estimate_task_hours(modules:, config: {}, persona: nil)
+      body = { modules: modules, persona: persona }.merge(config || {}).compact
+      handle_response(json_conn.post("/v1/estimate/agent/hours", body))
+    end
   end
 end

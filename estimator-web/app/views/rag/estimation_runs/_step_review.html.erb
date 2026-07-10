@@ -3,8 +3,9 @@
 <h2 class="text-lg font-bold tracking-tight text-white mb-1">3 · Revisión humana de la estructura</h2>
 <p class="text-white/50 text-sm mb-5">
   Antes de estimar horas, revisa el desglose: añade, elimina o renombra módulos y tareas.
-  Cuando esté correcto, lanzamos la <span class="text-white/80">búsqueda vectorial por tarea</span>
-  para derivar las horas desde proyectos históricos similares.
+  Cuando esté correcto, corre la <span class="text-white/80">búsqueda vectorial por tarea</span>
+  (determinista) y el <span class="text-white/80">agente recupera</span> las tareas sin análogo
+  reformulando la búsqueda, para derivar las horas desde proyectos históricos similares.
 </p>
 
 <% if !run.step_complete?("generation") %>
@@ -26,6 +27,8 @@
       <p data-estimate-modules-editor-target="empty" class="<%= "hidden" if modules.any? %> p-4 text-white/40 text-sm">
         Sin módulos. Añade bloques funcionales con «+ Añadir módulo».
       </p>
+
+      <%= render "agent_profile_select" %>
 
       <div class="flex items-center justify-between mt-2 mb-5">
         <button type="button" data-action="estimate-modules-editor#addModule"

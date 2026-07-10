@@ -97,6 +97,13 @@ def _consensus(neighbors: list[tuple[int, float]]) -> tuple[int, float, float]:
     return round(weighted_hours), round(reliability, 3), round(dispersion, 3)
 
 
+# Public alias for the consensus primitive. Session 12: the agentic hours-recovery
+# loop injects this as its ``consensus_fn`` (via the conductor) so the agent's
+# ``derive_task_hours`` tool reuses the SAME distance-weighted math as the
+# deterministic path — the agent decides the search, never the arithmetic.
+distance_weighted_consensus = _consensus
+
+
 async def estimate_one(
     module: str,
     name: str,

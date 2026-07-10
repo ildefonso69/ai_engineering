@@ -1,24 +1,28 @@
 #!/usr/bin/env python3
 """Session 12 — run the hand-written estimation agent over a transcript.
 
-This is the deliverable generator: it feeds a meeting transcript to the manual
-agent loop (``app/generation/agentic/agent_loop.py``), prints the step-by-step
-trace (reasoning → action → observation) and the final structured estimate, and
-optionally writes them to a file.
+The agent drives the two wizard phases around the human review gate. This CLI
+shows both loops end to end (auto-approving the structure in between, so there is
+no interactive pause):
+
+1. **Phase 1 — structure**: the agent decomposes the brief into modules→tasks
+   (no tools, no hours). Prints the one-step trace + the tree.
+2. **Phase 2 — hours recovery**: the reason→act→observe loop searches historical
+   analogs for each task and derives hours with the deterministic consensus.
+   Prints the STEP N trace + the derived hours.
+
+(The live wizard runs a deterministic per-task pass first and only sends the
+UNGROUNDED tasks to phase 2; this CLI sends every task so the loop is always
+exercised — that is the point of the deliverable trace.)
 
 Cost discipline (from the statement): debug the LOOP MECHANICS cheaply first with
-``gpt-5-mini`` and the simple transcript, then switch to ``gpt-5`` / ``medium`` for
-the real run on the complex transcript.
+``gpt-5-mini`` + ``--stub``, then switch to ``gpt-5`` / ``medium`` for the real run.
 
-    # 1) cheap loop debugging (real retrieval, needs the stack up + task corpus)
-    docker compose exec estimator python scripts/run_agent_s12.py \\
-        exercises/session-12/sample_transcript_simple.txt --model gpt-5-mini --effort minimal
-
-    # 2) offline loop debugging with the student stub (NO database needed)
+    # 1) offline loop debugging with the student stub (NO database needed)
     uv run python scripts/run_agent_s12.py \\
         exercises/session-12/sample_transcript_simple.txt --model gpt-5-mini --stub
 
-    # 3) the real deliverable run
+    # 2) the real run (needs the stack up + task corpus ingested)
     docker compose exec estimator python scripts/run_agent_s12.py \\
         exercises/session-12/sample_transcript_complex.txt --model gpt-5 --effort medium \\
         --out exercises/session-12/example_trace_complex.txt
@@ -43,8 +47,13 @@ if str(REPO_ROOT) not in sys.path:
 
 from app.config import get_settings  # noqa: E402
 from app.dependencies import get_async_openai_client  # noqa: E402
-from app.generation.agentic.agent_loop import run_estimation_agent  # noqa: E402
-from app.generation.agentic.agent_schemas import AgentRunResult, SearchBudgetsArgs  # noqa: E402
+from app.generation.agentic.agent_loop import (  # noqa: E402
+    run_structure_agent,
+    run_task_hours_recovery_agent,
+)
+from app.generation.agentic.agent_schemas import AgentStructure, AgentTaskHoursRun, AgentTaskRef  # noqa: E402
+from app.generation.rag.agent_retrieval import default_retrieval_backend  # noqa: E402
+from app.generation.rag.task_hours import distance_weighted_consensus  # noqa: E402
 
 STUB_PATH = REPO_ROOT / "exercises" / "session-12" / "reference_retrieval.py"
 
@@ -57,39 +66,69 @@ def _load_stub_backend():
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
 
-    async def stub_backend(args: SearchBudgetsArgs) -> list[dict]:
-        filters = args.filters.model_dump() if args.filters else None
-        return module.search_budgets_stub(args.query, filters)
+    async def stub_backend(query: str, sectors: list[str] | None) -> list[dict]:
+        filters = {"sectors": sectors, "component_type": None} if sectors else None
+        return module.search_budgets_stub(query, filters)
 
     return stub_backend
 
 
-def _render(result: AgentRunResult) -> str:
+def _tasks_from_structure(structure: AgentStructure) -> list[AgentTaskRef]:
+    """Flatten the proposed tree into recovery refs (CLI: ground every task)."""
+    return [
+        AgentTaskRef(
+            module=m.name,
+            task=t.name,
+            description=t.description,
+            reason="CLI demo: derive hours for every proposed task",
+        )
+        for m in structure.modules
+        for t in m.tasks
+    ]
+
+
+def _render_structure(structure: AgentStructure, trace_text: str) -> str:
     lines = [
         "=" * 78,
-        "AGENT TRACE",
+        "PHASE 1 — STRUCTURE (agent decomposition)",
         "=" * 78,
-        result.trace.render(),
+        trace_text,
+        "",
+        f"confidence: {structure.confidence}",
+        "",
+    ]
+    for m in structure.modules:
+        lines.append(f"  # {m.name}")
+        for t in m.tasks:
+            desc = f" — {t.description}" if t.description else ""
+            lines.append(f"    - {t.name}{desc}")
+    return "\n".join(lines)
+
+
+def _render_hours(run: AgentTaskHoursRun) -> str:
+    lines = [
         "",
         "=" * 78,
-        f"FINAL ESTIMATE  (iterations={result.iterations}, stopped={result.stopped_reason})",
+        f"PHASE 2 — HOURS RECOVERY  (iterations={run.iterations}, stopped={run.stopped_reason})",
         "=" * 78,
+        run.trace.render(),
+        "",
+        "DERIVED HOURS",
     ]
-    estimate = result.estimate
-    if estimate is None:
-        lines.append("(the agent stopped without producing a structured estimate)")
+    if not run.derivations:
+        lines.append("  (the agent grounded no task)")
         return "\n".join(lines)
-
-    for component in estimate.components:
-        cited = ", ".join(str(c) for c in component.cited_chunk_ids) or "none"
-        lines.append(f"  - {component.name}: {component.estimated_hours}h  [sources: {cited}]")
-        lines.append(f"      {component.rationale}")
+    total = 0
+    for d in run.derivations:
+        if d.has_match and d.estimated_hours is not None:
+            total += d.estimated_hours
+            lines.append(
+                f"  - {d.module} / {d.task}: {d.estimated_hours}h  (reliability {d.reliability})"
+            )
+        else:
+            lines.append(f"  - {d.module} / {d.task}: unresolved")
     lines.append("")
-    lines.append(f"  TOTAL: {estimate.total_hours}h    confidence: {estimate.confidence}")
-    if estimate.assumptions:
-        lines.append("  assumptions:")
-        for assumption in estimate.assumptions:
-            lines.append(f"    · {assumption}")
+    lines.append(f"  TOTAL (grounded tasks): {total}h")
     return "\n".join(lines)
 
 
@@ -107,7 +146,7 @@ async def _main_async(args: argparse.Namespace) -> int:
         )
         return 1
 
-    backend = _load_stub_backend() if args.stub else None
+    backend = _load_stub_backend() if args.stub else default_retrieval_backend
     transcript = transcript_path.read_text(encoding="utf-8")
 
     print(f"transcript : {transcript_path}")
@@ -117,18 +156,28 @@ async def _main_async(args: argparse.Namespace) -> int:
     )
     print()
 
-    result = await run_estimation_agent(
+    # Phase 1 — the agent proposes the structure (the transcript is the brief).
+    structure, structure_trace = await run_structure_agent(
         transcript,
+        client=client,
+        model=args.model,
+        reasoning_effort=args.effort,
+    )
+    rendered = _render_structure(structure, structure_trace.render())
+
+    # Human gate (auto-approved here) → phase 2 recovery over every task.
+    run = await run_task_hours_recovery_agent(
+        _tasks_from_structure(structure),
         client=client,
         model=args.model,
         reasoning_effort=args.effort,
         max_iterations=args.max_iterations,
         retrieval_backend=backend,
+        consensus_fn=distance_weighted_consensus,
     )
+    rendered += "\n" + _render_hours(run)
 
-    rendered = _render(result)
     print(rendered)
-
     if args.out:
         Path(args.out).write_text(rendered + "\n", encoding="utf-8")
         print(f"\n(trace written to {args.out})")

@@ -1,15 +1,17 @@
 <% view = run.generation_view %>
 
-<h2 class="text-lg font-bold tracking-tight text-white mb-1">2 · Generación de la estructura</h2>
+<h2 class="text-lg font-bold tracking-tight text-white mb-1">2 · Generación de la estructura (agente)</h2>
 <p class="text-white/50 text-sm mb-5">
-  gpt-5 descompone el proyecto en <span class="text-white/80">módulos → tareas</span> como una
+  El <span class="text-white/80">agente hecho a mano (Sesión 12)</span> descompone el proyecto en
+  <span class="text-white/80">módulos → tareas</span> como una
   <span class="text-white/80">decomposición libre del brief</span>: <span class="text-white/80">sin
   mirar la BBDD vectorial</span> y sin estimar horas. Las horas se derivan después, por tarea, con
-  búsqueda semántica (paso «Horas»).
+  búsqueda semántica (paso «Horas»). Tú revisas y editas el árbol en el siguiente paso.
 </p>
 
   <%= form_with url: generate_rag_estimation_run_path(run), method: :post, local: true,
         class: "mb-6", data: { controller: "form-loading", action: "submit->form-loading#start" } do %>
+    <%= render "agent_profile_select" %>
     <button type="submit" data-form-loading-target="submit" data-disable-with="false"
             class="inline-flex items-center px-5 py-2.5 bg-brand text-ink-dark font-bold tracking-tight rounded-md hover:bg-brand-strong cursor-pointer transition-colors text-sm disabled:cursor-not-allowed">
       <span data-form-loading-target="label"><%= view ? "Re-generar estructura" : "Generar estructura" %></span>
@@ -36,6 +38,11 @@
 
   <% if view %>
     <% estimate = view.estimate %>
+
+    <%# Session 12 · the agent's one-step decomposition trace (why it split it so). %>
+    <% if (trace = run.generation_agent_trace) %>
+      <%= render "agent_trace", trace: trace, title: "Traza del agente · descomposición" %>
+    <% end %>
 
     <%# Grounding signals — the teaching payoff. %>
     <% unless view.grounding_clean? %>
@@ -117,7 +124,6 @@
                       <div class="text-white/50 text-xs mt-0.5"><%= task.description %></div>
                     <% end %>
                   </td>
-                  <td class="p-3 align-top text-white/50 font-mono text-xs w-28"><%= task.sources_label.presence || "—" %></td>
                 </tr>
               <% end %>
             </tbody>

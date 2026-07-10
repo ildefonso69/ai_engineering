@@ -51,15 +51,19 @@ module Rag
       end
     end
 
-    # Structure-only generation (Session 10): a FREE decomposition of the brief —
-    # no retrieval, no sources. The LLM proposes the module→task tree WITHOUT hours;
-    # the hours are derived later by per-task semantic search.
+    # Phase 1 (Session 12) — the AGENT proposes the module→task structure as a free
+    # decomposition of the brief (no retrieval, no sources, no hours). Same shape as
+    # the deterministic /stages/structure plus the agent's one-step trace; the human
+    # reviews the tree next. The hours are derived later by per-task search.
     def generate
       @run = Rag::EstimationRun.find(params[:id])
       guard_rag_errors do
         query = @run.reformulation_view&.query
-        payload = rag_client(timeout: GENERATE_TIMEOUT_SECONDS).generate_structure(
-          query: query ? query.to_payload : {}
+        profile = agent_profile
+        payload = rag_client(timeout: GENERATE_TIMEOUT_SECONDS).agent_generate_structure(
+          query: query ? query.to_payload : {},
+          config: profile&.config_payload || {},
+          persona: profile&.persona
         )
         @run.update!(
           generation: payload,
@@ -74,14 +78,21 @@ module Rag
       end
     end
 
-    # Human review #1 done → persist the edited structure and derive hours per
-    # task by vector search over the historical task corpus.
+    # Human review #1 done → persist the edited structure and derive hours per task.
+    # Phase 2 (Session 12): the deterministic per-task vector search runs first, and
+    # the AGENT re-searches only the tasks it could not ground (its recovery trace
+    # rides along in ``task_hours``). Same shape as the deterministic /tasks/hours.
     def estimate_hours
       @run = Rag::EstimationRun.find(params[:id])
       modules = normalized_structure
       @run.update!(structure: { "modules" => modules })
       guard_rag_errors do
-        result = rag_client.estimate_task_hours(modules: structure_for_api(modules))
+        profile = agent_profile
+        result = rag_client(timeout: GENERATE_TIMEOUT_SECONDS).agent_estimate_task_hours(
+          modules: structure_for_api(modules),
+          config: profile&.config_payload || {},
+          persona: profile&.persona
+        )
         @run.update!(
           task_hours: result,
           adjusted_breakdown: seed_breakdown_with_hours(modules, result),
@@ -89,7 +100,7 @@ module Rag
           current_step: "hours"
         )
         redirect_to rag_estimation_run_path(@run, step: "hours"),
-                    notice: "Horas estimadas por búsqueda vectorial."
+                    notice: "Horas estimadas (determinista + recuperación del agente)."
       end
     end
 
@@ -117,6 +128,13 @@ module Rag
     end
 
     private
+
+    # The agent profile driving the two phases: the one picked in the form, else
+    # the handwritten default. Nil when no profiles exist → the service defaults win.
+    def agent_profile
+      Agents::Profile.find_by(id: params[:profile_id]) ||
+        Agents::Profile.where(agent_type: "handwritten").find(&:is_default?)
+    end
 
     # Default blended rate seeded into the breakdown; the human edits it per task.
     DEFAULT_RATE_EUR_PER_HOUR = 75
@@ -153,8 +171,7 @@ module Rag
 
     def seed_structure_task(raw)
       raw = raw.transform_keys(&:to_s)
-      { "name" => raw["name"].to_s, "description" => raw["description"].to_s,
-        "sources" => Array(raw["sources"]).map(&:to_i) }
+      { "name" => raw["name"].to_s, "description" => raw["description"].to_s }
     end
 
     # Merge the per-task hours estimates back into the structure to seed the
@@ -173,7 +190,6 @@ module Rag
           matched = hit.fetch("has_match", false)
           {
             "name" => task["name"], "description" => task["description"],
-            "sources" => Array(task["sources"]).map(&:to_i),
             "estimated_hours" => hit["estimated_hours"],
             "hours_reliability" => hit["reliability"],
             "has_match" => matched,
@@ -207,7 +223,7 @@ module Rag
 
     # --- param parsing (integer-indexed hashes from the Stimulus editor) --------
 
-    # Review #1 structure: name / description / sources, NO hours yet.
+    # Review #1 structure: name / description, NO hours yet.
     def normalized_structure
       values_of(params[:modules]).filter_map do |raw_module|
         attrs = to_h(raw_module)
@@ -219,8 +235,7 @@ module Rag
           tname = ta["name"].to_s.strip
           next if tname.blank?
 
-          { "name" => tname, "description" => ta["description"].to_s,
-            "sources" => parse_sources(ta["sources"]) }
+          { "name" => tname, "description" => ta["description"].to_s }
         end
         { "name" => name, "description" => attrs["description"].to_s, "tasks" => tasks }
       end
@@ -242,8 +257,7 @@ module Rag
           { "name" => tname, "description" => ta["description"].to_s,
             "estimated_hours" => hours,
             "rate_eur_per_hour" => ta["rate_eur_per_hour"].to_i,
-            "has_match" => !hours.nil?,
-            "sources" => parse_sources(ta["sources"]) }
+            "has_match" => !hours.nil? }
         end
         { "name" => name, "description" => attrs["description"].to_s, "tasks" => tasks }
       end
@@ -260,16 +274,14 @@ module Rag
       obj.respond_to?(:to_unsafe_h) ? obj.to_unsafe_h : (obj || {})
     end
 
-    def parse_sources(value)
-      value.to_s.split(/[,\s]+/).map(&:to_i).select(&:positive?)
-    end
-
     # --- error handling (mirrors the Chunking Lab posture) -------------------
     # Inline rescue (not rescue_from): the EstimatorAi error taxonomy lives in
     # base_client.rb, so the constants only resolve once a client has loaded —
     # which always happens inside the yielded block before any error is raised.
     def guard_rag_errors
       yield
+    rescue EstimatorAi::GuardrailViolation => e
+      redirect_back_to_run("Entrada rechazada por guardarraíles: #{e.message}")
     rescue EstimatorAi::InvalidRequest => e
       redirect_back_to_run("Petición inválida: #{e.message}")
     rescue EstimatorAi::ServerError => e

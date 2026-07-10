@@ -36,11 +36,17 @@ Rails.application.routes.draw do
     resources :estimation_runs, only: [ :index, :new, :create, :show ] do
       member do
         post  :reformulate
-        post  :generate       # free structure-only decomposition (no RAG)
-        post  :estimate_hours # save reviewed structure → per-task semantic search → hours
+        post  :generate       # S12 agent proposes the structure (free decomposition)
+        post  :estimate_hours # save reviewed structure → deterministic hours + agent recovery
         patch :verify         # edit hours/rates, compute cost, confirm + store
       end
     end
+  end
+
+  # Session 12 — agents console: named, personalizable profiles for the
+  # hand-written agent (the ACB is shown read-only here).
+  namespace :agents do
+    resources :profiles
   end
 
   # Runtime model configuration of the AI service (Ajustes).

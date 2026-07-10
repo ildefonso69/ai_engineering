@@ -1,13 +1,21 @@
 """The agent's tools: flat Responses schemas + Python implementations.
 
-Two required tools, one optional:
+Session 12 reshaped the agent to drive the two wizard phases. Phase 1
+(structure) uses NO tools. Phase 2 (hours recovery) uses these three:
 
-* ``search_budgets`` — WRAPS the Session 9/10 retrieval pipeline (``retrieve()``);
-  it does NOT reimplement retrieval. Its retrieval backend is injectable so a
+* ``search_budgets`` — WRAPS the Session 9/10 retrieval pipeline (via an injected
+  backend); it does NOT reimplement retrieval. The backend is injectable so a
   student stub (``exercises/session-12/reference_retrieval.py``) can stand in when
   the DB is not up.
-* ``calculate_estimate`` — a deterministic, non-LLM cost function.
-* ``validate_estimate`` — optional S4-style guardrails over the final estimate.
+* ``derive_task_hours`` — deterministic, non-LLM: it runs the SAME distance-
+  weighted consensus as the Session 10 per-task path (injected ``consensus_fn``)
+  over the analogs the agent gathered from ``search_budgets``. The agent decides
+  the search; the arithmetic stays deterministic.
+* ``validate_estimate`` — optional S4-style guardrails over the recovered hours.
+
+Layering: this module holds only STRUCTURAL callable types for its two injected
+dependencies (``RetrievalBackend`` / ``ConsensusFn``) — it imports neither ``rag``
+nor ``dependencies``. The conductor wires the concrete rag implementations in.
 
 Schema shape matters: the Responses API uses a **flat** function schema
 (``{"type": "function", "name": ..., "parameters": {...}}``), NOT the Chat
@@ -23,29 +31,26 @@ the live-session exercise.
 
 from __future__ import annotations
 
-import asyncio
-import statistics
 from typing import Any, Awaitable, Callable
 
 import structlog
 
-from app.config import get_settings
-from app.dependencies import get_embedder
 from app.generation.agentic.agent_schemas import (
-    CalculateEstimateArgs,
+    DeriveTaskHoursArgs,
     SearchBudgetsArgs,
     ValidateEstimateArgs,
 )
-from app.generation.rag.retrieval.collections import Collection
-from app.generation.rag.retrieval.pipeline import retrieve
 
 log = structlog.get_logger()
 
-# Contingency buffer applied to every component's central estimate. A flat,
-# transparent number keeps the cost model auditable — no hidden magic.
-CONTINGENCY_FACTOR = 0.15
+# A retrieval backend: ``(query, sectors) -> list[dict]``. Structural on purpose
+# so this module never imports rag; the conductor injects rag's concrete closure.
+RetrievalBackend = Callable[[str, list[str] | None], Awaitable[list[dict[str, Any]]]]
 
-CONTENT_PREVIEW_CHARS = 160
+# A consensus function: ``[(hours, distance), ...] -> (hours, reliability, dispersion)``.
+# The conductor injects rag's ``distance_weighted_consensus`` — the SAME math the
+# deterministic per-task path uses.
+ConsensusFn = Callable[[list[tuple[int, float]]], tuple[int, float, float]]
 
 
 # --------------------------------------------------------------------------- #
@@ -55,14 +60,14 @@ SEARCH_BUDGETS_TOOL: dict[str, Any] = {
     "type": "function",
     "name": "search_budgets",
     "description": (
-        "Search historical project budgets for work analogous to ONE component or "
-        "requirement, and return the matching items with their recorded effort in "
-        "engineer-hours. Call this once per component you need to cost (e.g. once "
-        "for the payments backend, once for the mobile app). Use a focused, "
-        "component-specific query — not the whole project. Returns a list of "
-        "historical items, each with an id, a text preview, its sector and its "
-        "recorded engineer-hours; use those hours as the reference_amounts for "
-        "calculate_estimate."
+        "Search historical project tasks for work analogous to ONE task you are "
+        "trying to cost, and return the matching items with their recorded effort "
+        "in engineer-hours. Call this once per task you need to ground. Use a "
+        "focused, task-specific query — reformulate it (different wording, "
+        "synonyms, or drop/relax a filter) if the first search finds nothing. "
+        "Returns a list of historical items, each with an id, a text preview, its "
+        "sector, its recorded engineer-hours and its distance; pass those "
+        "(hours + distance) as the neighbors for derive_task_hours."
     ),
     "parameters": {
         "type": "object",
@@ -70,8 +75,8 @@ SEARCH_BUDGETS_TOOL: dict[str, Any] = {
             "query": {
                 "type": "string",
                 "description": (
-                    "Natural-language description of the single component to find "
-                    "budgets for, e.g. 'OAuth2 authentication backend with JWT and "
+                    "Natural-language description of the single task to find "
+                    "analogs for, e.g. 'OAuth2 authentication backend with JWT and "
                     "multi-tenant token isolation'."
                 ),
             },
@@ -99,43 +104,55 @@ SEARCH_BUDGETS_TOOL: dict[str, Any] = {
     "strict": True,
 }
 
-CALCULATE_ESTIMATE_TOOL: dict[str, Any] = {
+DERIVE_TASK_HOURS_TOOL: dict[str, Any] = {
     "type": "function",
-    "name": "calculate_estimate",
+    "name": "derive_task_hours",
     "description": (
-        "Deterministically compute an effort estimate in engineer-hours from a set "
-        "of components and their historical reference amounts. For each component it "
-        "takes the median of the reference_amounts and adds a fixed contingency "
-        "buffer; it then sums the components into a total. Call this once you have "
-        "gathered reference amounts (from search_budgets) for every component. This "
-        "does NOT call a model — it is pure arithmetic, so its output is reproducible."
+        "Deterministically derive the engineer-hours for ONE task from the "
+        "historical analogs you found with search_budgets. It computes a "
+        "distance-weighted consensus of the neighbours' hours (closer analogs "
+        "count more) plus a 0..1 reliability score — the SAME arithmetic the "
+        "standard pipeline uses. Pass the neighbours exactly as search_budgets "
+        "returned them (each with its estimated_hours AND its distance). Call this "
+        "once you have gathered analogs for the task. This does NOT call a model — "
+        "it is pure arithmetic, so its output is reproducible. If you found no "
+        "usable analog, do NOT call this with an empty list; report the task as "
+        "unresolved instead."
     ),
     "parameters": {
         "type": "object",
         "properties": {
-            "components": {
+            "module": {"type": "string", "description": "Module the task belongs to."},
+            "task": {"type": "string", "description": "Task name (echoed back)."},
+            "neighbors": {
                 "type": "array",
-                "description": "The components to cost.",
+                "description": "Historical analogs from search_budgets that anchor this task.",
                 "items": {
                     "type": "object",
                     "properties": {
-                        "name": {"type": "string", "description": "Component name."},
-                        "reference_amounts": {
-                            "type": "array",
-                            "items": {"type": "number"},
-                            "description": (
-                                "Historical engineer-hours for analogous work, taken "
-                                "from search_budgets results. May be empty if nothing "
-                                "was found (the component is then flagged)."
-                            ),
+                        "estimated_hours": {
+                            "type": "integer",
+                            "description": "Recorded engineer-hours for the analog.",
+                        },
+                        "distance": {
+                            "type": "number",
+                            "description": "Cosine distance from search_budgets (lower = closer).",
+                        },
+                        "source_id": {
+                            "type": ["integer", "null"],
+                            "description": "DB id of the analog chunk (the search result 'id').",
+                        },
+                        "budget_id": {
+                            "type": ["string", "null"],
+                            "description": "Traceable parent budget id, if any.",
                         },
                     },
-                    "required": ["name", "reference_amounts"],
+                    "required": ["estimated_hours", "distance", "source_id", "budget_id"],
                     "additionalProperties": False,
                 },
             },
         },
-        "required": ["components"],
+        "required": ["module", "task", "neighbors"],
         "additionalProperties": False,
     },
     "strict": True,
@@ -145,19 +162,19 @@ VALIDATE_ESTIMATE_TOOL: dict[str, Any] = {
     "type": "function",
     "name": "validate_estimate",
     "description": (
-        "Run sanity-check guardrails over a finished estimate before returning it. "
-        "It flags components with no historical reference, components whose hours are "
-        "far outside the range of their references, a total that does not match the "
-        "sum of the components, and non-positive or implausibly large totals. Call "
-        "this as the LAST step, once you have a full estimate, and address any issues "
-        "it reports before giving your final answer. Returns {ok, issues}."
+        "Run sanity-check guardrails over the hours you recovered before finishing. "
+        "It flags tasks with no historical reference, tasks whose hours are far "
+        "outside the range of their references, a total that does not match the sum "
+        "of the tasks, and non-positive or implausibly large totals. Call this as "
+        "the LAST step, once you have derived hours for the tasks you could ground, "
+        "and address any issues it reports. Returns {ok, issues}."
     ),
     "parameters": {
         "type": "object",
         "properties": {
             "components": {
                 "type": "array",
-                "description": "The estimate's components, with their final hours and references.",
+                "description": "The recovered tasks, with their final hours and references.",
                 "items": {
                     "type": "object",
                     "properties": {
@@ -174,7 +191,7 @@ VALIDATE_ESTIMATE_TOOL: dict[str, Any] = {
             },
             "total_hours": {
                 "type": "number",
-                "description": "The estimate's grand total in engineer-hours.",
+                "description": "The sum of the recovered task hours.",
             },
         },
         "required": ["components", "total_hours"],
@@ -183,67 +200,23 @@ VALIDATE_ESTIMATE_TOOL: dict[str, Any] = {
     "strict": True,
 }
 
-TOOL_SCHEMAS: list[dict[str, Any]] = [
+# Phase 1 (structure) uses no tools; phase 2 (hours recovery) uses all three.
+STRUCTURE_TOOL_SCHEMAS: list[dict[str, Any]] = []
+HOURS_TOOL_SCHEMAS: list[dict[str, Any]] = [
     SEARCH_BUDGETS_TOOL,
-    CALCULATE_ESTIMATE_TOOL,
+    DERIVE_TASK_HOURS_TOOL,
     VALIDATE_ESTIMATE_TOOL,
 ]
-
-
-# --------------------------------------------------------------------------- #
-# Retrieval backend (injectable)                                              #
-# --------------------------------------------------------------------------- #
-# A backend is an async callable that takes the validated search args and returns
-# a list of plain-dict historical items. The default wraps retrieve(); the student
-# stub swaps in a canned one so the loop can be debugged without a database.
-RetrievalBackend = Callable[[SearchBudgetsArgs], Awaitable[list[dict[str, Any]]]]
-
-
-async def default_retrieval_backend(args: SearchBudgetsArgs) -> list[dict[str, Any]]:
-    """Wrap the real Session 9/10 hybrid retrieval pipeline.
-
-    Embeds the query with the same model used at ingest time, then runs the
-    single-collection ``retrieve()`` over the budget collection, restricted to
-    ``historical_task`` chunks (those carry the recorded engineer-hours the agent
-    needs). Filtering, ranking and reranking all happen inside ``retrieve()`` — this
-    function only adapts the query in and the chunks out.
-    """
-    embedder = get_embedder()
-    if embedder is None:
-        raise RuntimeError("Embedding service is not available (no OPENAI_API_KEY).")
-
-    settings = get_settings()
-    sectors = args.filters.sectors if args.filters else None
-    query_embedding = await asyncio.to_thread(embedder.embed_one, args.query)
-    result = await retrieve(
-        query_embedding=query_embedding,
-        query_text=args.query,
-        collection=Collection.BUDGET,
-        chunk_types=["historical_task"],
-        top_k=settings.AGENT_SEARCH_TOP_K,
-        distance_threshold=settings.AGENT_SEARCH_DISTANCE_THRESHOLD,
-        sectors=sectors,
-    )
-    return [
-        {
-            "id": chunk.id,
-            "content_preview": " ".join(chunk.content.split())[:CONTENT_PREVIEW_CHARS],
-            "sector": chunk.sector,
-            "budget_id": chunk.budget_id,
-            "estimated_hours": chunk.estimated_hours,
-            "distance": round(chunk.distance, 4),
-        }
-        for chunk in result.chunks
-    ]
 
 
 # --------------------------------------------------------------------------- #
 # Tool implementations                                                        #
 # --------------------------------------------------------------------------- #
 async def search_budgets(raw_args: dict[str, Any], *, backend: RetrievalBackend) -> dict[str, Any]:
-    """Retrieve historical budget items for one component."""
+    """Retrieve historical analogs for one task via the injected backend."""
     args = SearchBudgetsArgs.model_validate(raw_args)
-    items = await backend(args)
+    sectors = args.filters.sectors if args.filters else None
+    items = await backend(args.query, sectors)
     hours = [it["estimated_hours"] for it in items if it.get("estimated_hours") is not None]
     summary = (
         f"{len(items)} historical items for {args.query!r}; hours={hours}"
@@ -254,43 +227,40 @@ async def search_budgets(raw_args: dict[str, Any], *, backend: RetrievalBackend)
     return {"items": items, "count": len(items), "summary": summary}
 
 
-def calculate_estimate(raw_args: dict[str, Any]) -> dict[str, Any]:
-    """Deterministically cost the components. No LLM."""
-    args = CalculateEstimateArgs.model_validate(raw_args)
-    breakdown: list[dict[str, Any]] = []
-    total = 0.0
-    for component in args.components:
-        refs = component.reference_amounts
-        if refs:
-            central = statistics.median(refs)
-            hours = round(central * (1 + CONTINGENCY_FACTOR), 1)
-            flagged = False
-        else:
-            # No reference to anchor on: cost nothing and flag it, rather than
-            # inventing a number. The agent should notice and search again.
-            hours = 0.0
-            flagged = True
-        total += hours
-        breakdown.append(
-            {
-                "name": component.name,
-                "reference_count": len(refs),
-                "estimated_hours": hours,
-                "unbudgeted": flagged,
-            }
-        )
-    total = round(total, 1)
-    log.info("agent_tool_calculate_estimate", components=len(breakdown), total_hours=total)
+def derive_task_hours(raw_args: dict[str, Any], *, consensus_fn: ConsensusFn) -> dict[str, Any]:
+    """Distance-weighted consensus over the analogs the agent found. No LLM."""
+    args = DeriveTaskHoursArgs.model_validate(raw_args)
+    if not args.neighbors:
+        # Guard: an empty consensus is meaningless. Return a no-match so the agent
+        # reports the task unresolved instead of fabricating a zero.
+        return {
+            "module": args.module,
+            "task": args.task,
+            "has_match": False,
+            "summary": f"no neighbours supplied for {args.task!r}; task left unresolved",
+        }
+    pairs = [(n.estimated_hours, n.distance) for n in args.neighbors]
+    hours, reliability, dispersion = consensus_fn(pairs)
+    log.info(
+        "agent_tool_derive_task_hours",
+        task=args.task,
+        neighbors=len(pairs),
+        hours=hours,
+        reliability=reliability,
+    )
     return {
-        "components": breakdown,
-        "total_hours": total,
-        "contingency_factor": CONTINGENCY_FACTOR,
-        "summary": f"total={total}h across {len(breakdown)} components",
+        "module": args.module,
+        "task": args.task,
+        "estimated_hours": hours,
+        "reliability": reliability,
+        "dispersion": dispersion,
+        "has_match": True,
+        "summary": f"{args.task!r}: {hours}h (reliability {reliability}) from {len(pairs)} analogs",
     }
 
 
 def validate_estimate(raw_args: dict[str, Any]) -> dict[str, Any]:
-    """S4-style guardrails over the final estimate. No LLM."""
+    """S4-style guardrails over the recovered hours. No LLM."""
     args = ValidateEstimateArgs.model_validate(raw_args)
     issues: list[str] = []
 
@@ -332,7 +302,11 @@ def validate_estimate(raw_args: dict[str, Any]) -> dict[str, Any]:
 # Dispatch                                                                     #
 # --------------------------------------------------------------------------- #
 async def dispatch_tool(
-    name: str, raw_args: dict[str, Any], *, backend: RetrievalBackend
+    name: str,
+    raw_args: dict[str, Any],
+    *,
+    backend: RetrievalBackend,
+    consensus_fn: ConsensusFn,
 ) -> dict[str, Any]:
     """Route a tool call to its implementation.
 
@@ -342,8 +316,8 @@ async def dispatch_tool(
     """
     if name == "search_budgets":
         return await search_budgets(raw_args, backend=backend)
-    if name == "calculate_estimate":
-        return calculate_estimate(raw_args)
+    if name == "derive_task_hours":
+        return derive_task_hours(raw_args, consensus_fn=consensus_fn)
     if name == "validate_estimate":
         return validate_estimate(raw_args)
     raise ValueError(f"Unknown tool: {name!r}")

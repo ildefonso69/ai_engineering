@@ -13,6 +13,8 @@ from typing import Literal
 
 from pydantic import BaseModel, Field, model_validator
 
+from app.domain.schemas.agent_trace import AgentTrace
+
 # Closed universe of client sectors present in the sample dataset. Kept as a
 # Literal so a typo or an unexpected sector fails validation loudly instead of
 # silently leaking into the metadata.
@@ -668,6 +670,11 @@ class GenerateResult(BaseModel):
         "structure-only stage, which has no sources to verify).",
     )
     coherent: bool = Field(description="False when an insufficient estimate still carries numbers.")
+    agent_trace: AgentTrace | None = Field(
+        default=None,
+        description="Session 12: the hand-written agent's reason→act→observe trace when the "
+        "structure was proposed by the agent (None on the deterministic /stages/structure path).",
+    )
 
 
 class VerifyRequest(BaseModel):
@@ -780,3 +787,61 @@ class TaskHoursResult(BaseModel):
     """Per-task hours estimates, in the order the tasks were submitted."""
 
     tasks: list[TaskHoursEstimate] = Field(default_factory=list)
+    agent_trace: AgentTrace | None = Field(
+        default=None,
+        description="Session 12: the hand-written agent's recovery trace when the agent re-searched "
+        "the tasks the deterministic pass could not ground (None on /tasks/hours; empty-step trace "
+        "when nothing needed recovery).",
+    )
+
+
+# ---------------------------------------------------------------------------
+# Session 12 — request models for the agent-driven wizard phases.
+#
+# The agent drives the SAME two wizard steps as the deterministic path, so its
+# endpoints reuse the deterministic response models (``GenerateResult`` /
+# ``TaskHoursResult``). Only the request grows: the same body plus optional
+# per-run agent knobs (an agent profile in the Rails UI), each falling back to
+# the ``AGENT_*`` settings when null.
+# ---------------------------------------------------------------------------
+
+AgentReasoningEffort = Literal["minimal", "low", "medium", "high"]
+
+
+class AgentStructureRequest(BaseModel):
+    """Payload for ``POST /v1/estimate/agent/structure`` (phase 1)."""
+
+    query: EstimationQuery
+    model: str | None = Field(default=None, description="Override AGENT_MODEL for this run.")
+    reasoning_effort: AgentReasoningEffort | None = Field(
+        default=None, description="Override AGENT_REASONING_EFFORT for this run."
+    )
+    persona: str | None = Field(
+        default=None,
+        max_length=2000,
+        description="Extra operator instructions appended to the agent system prompt.",
+    )
+
+
+class AgentHoursRequest(BaseModel):
+    """Payload for ``POST /v1/estimate/agent/hours`` (phase 2, hybrid)."""
+
+    modules: list[TaskHoursModuleInput] = Field(min_length=1)
+    model: str | None = Field(default=None, description="Override AGENT_MODEL for this run.")
+    reasoning_effort: AgentReasoningEffort | None = Field(
+        default=None, description="Override AGENT_REASONING_EFFORT for this run."
+    )
+    max_iterations: int | None = Field(
+        default=None, ge=1, le=20, description="Override AGENT_MAX_ITERATIONS (recovery safeguard)."
+    )
+    search_top_k: int | None = Field(
+        default=None, ge=1, le=30, description="Neighbours per search (else runtime/settings default)."
+    )
+    search_distance_threshold: float | None = Field(
+        default=None, ge=0.0, le=2.0, description="Cosine cutoff (else runtime/settings default)."
+    )
+    persona: str | None = Field(
+        default=None,
+        max_length=2000,
+        description="Extra operator instructions appended to the agent system prompt.",
+    )

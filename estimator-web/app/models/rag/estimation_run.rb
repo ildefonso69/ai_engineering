@@ -15,6 +15,11 @@ module Rag
     # pipeline stage / human gate and to a JSONB column of the same family.
     # Session 10: the structure is a FREE decomposition of the brief (no retrieval
     # before it); retrieval re-enters per task in the ``hours`` step.
+    # Session 12: the hand-written agent now DRIVES those two phases (it proposes
+    # the structure in ``generation`` and recovers the ungrounded tasks' hours in
+    # ``hours``), around the same human ``review``/``verification`` gates — there is
+    # no separate agent step. Its trace rides along in the ``generation`` /
+    # ``task_hours`` JSONB.
     STEPS = %w[
       transcript reformulation generation review hours verification
     ].freeze
@@ -65,6 +70,20 @@ module Rag
     def adjusted? = adjusted_breakdown.present? && adjusted_breakdown["modules"].present?
 
     def confirmed? = adjusted_breakdown["confirmed_at"].present?
+
+    # Session 12: the hand-written agent's reason→act→observe trace, carried inside
+    # the phase JSONB it drove. Phase 1 (structure) has a thin one-step trace;
+    # phase 2 (hours) has the STEP N recovery trace (empty steps = nothing needed
+    # recovery). Nil when the phase was produced by the deterministic path.
+    def generation_agent_trace
+      raw = generation["agent_trace"] if generation.present?
+      Rag::AgentTraceView.from_hash(raw) if raw.present?
+    end
+
+    def hours_agent_trace
+      raw = task_hours["agent_trace"] if task_hours.present?
+      Rag::AgentTraceView.from_hash(raw) if raw.present?
+    end
 
     # --- wizard state --------------------------------------------------------
 

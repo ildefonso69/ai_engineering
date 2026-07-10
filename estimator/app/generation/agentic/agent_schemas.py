@@ -1,34 +1,52 @@
 """Schemas for the Session 12 hand-written agent.
 
-Three families of models live here:
+The agent no longer runs one autonomous shot over a transcript. It now drives
+the TWO phases of the existing estimation wizard, so the schemas split by phase:
 
-* **Tool argument models** (``SearchBudgetsArgs`` …) — the loop validates every
+* **Tool argument models** (``SearchBudgetsArgs`` / ``DeriveTaskHoursArgs`` /
+  ``ValidateEstimateArgs``) — the loop validates every
   ``json.loads(function_call.arguments)`` into one of these BEFORE dispatch, so a
   malformed / hallucinated argument becomes a returned error string the model can
   self-correct from, never an exception that kills the loop.
-* **Trace models** (``AgentStep`` / ``AgentTrace``) — the reasoning→action→
-  observation record the exercise requires. ``AgentTrace.render`` prints the
-  ``STEP N`` console format from the statement.
-* **Result models** (``AgentComponent`` / ``AgentEstimate`` / ``AgentRunResult``)
-  — a deliberately LIGHT final estimate, distinct from the heavy RAG ``Estimate``
-  (which mandates ``SourceCitation`` / ``WorkModule`` / coherence checks). The
-  terminal ``responses.parse`` call in the loop fills ``AgentEstimate``.
+* **Phase-1 structure** (``AgentStructure``) — the module→task tree the agent
+  proposes as a free decomposition of the brief (no tools, no hours). The
+  conductor maps it onto the RAG ``Estimate`` contract the wizard already renders.
+* **Phase-2 hours recovery** (``AgentTaskRef`` / ``AgentTaskDerivation`` /
+  ``AgentTaskHoursRun``) — the input flagged tasks and the derivations the
+  recovery loop produces, one per task it managed to ground.
+
+The trace models (``AgentStep`` / ``AgentTrace``) live in
+``app.domain.schemas.agent_trace`` — a shared audit contract the RAG response
+schemas also carry. They are re-exported here for backward-compatible imports.
 """
 
 from __future__ import annotations
 
-import json
-import re
-from typing import Any, Literal
+from typing import Literal
 
 from pydantic import BaseModel, Field
 
-Confidence = Literal["low", "medium", "high"]
+from app.domain.schemas.agent_trace import AgentStep, AgentTrace  # re-export
 
-# Strip NUL and other control characters a model may occasionally emit inside a
-# malformed unicode escape (e.g. a stray NUL byte in a tool argument), so a
-# model glitch never poisons the readable trace / the committed deliverable.
-_CONTROL_CHARS = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f]")
+__all__ = [
+    "AgentStep",
+    "AgentTrace",
+    "Confidence",
+    "SearchBudgetsFilters",
+    "SearchBudgetsArgs",
+    "DeriveTaskHoursNeighbor",
+    "DeriveTaskHoursArgs",
+    "ValidateComponentInput",
+    "ValidateEstimateArgs",
+    "AgentTaskNode",
+    "AgentModuleNode",
+    "AgentStructure",
+    "AgentTaskRef",
+    "AgentTaskDerivation",
+    "AgentTaskHoursRun",
+]
+
+Confidence = Literal["low", "medium", "high"]
 
 
 # --------------------------------------------------------------------------- #
@@ -58,19 +76,28 @@ class SearchBudgetsArgs(BaseModel):
     filters: SearchBudgetsFilters | None = None
 
 
-class ComponentInput(BaseModel):
-    """One component the agent wants costed, with its historical references."""
+class DeriveTaskHoursNeighbor(BaseModel):
+    """One historical analog the agent found via ``search_budgets``.
 
-    name: str = Field(min_length=1)
-    reference_amounts: list[float] = Field(
-        description="Historical amounts (engineer-hours) for analogous work, from search_budgets."
+    The agent copies these straight from a ``search_budgets`` result item — it
+    does NOT invent them. ``distance`` is what makes the consensus distance-
+    weighted, so it is required.
+    """
+
+    estimated_hours: int = Field(ge=0)
+    distance: float = Field(ge=0.0)
+    source_id: int | None = None
+    budget_id: str | None = None
+
+
+class DeriveTaskHoursArgs(BaseModel):
+    """Validated arguments for the ``derive_task_hours`` tool."""
+
+    module: str = Field(min_length=1)
+    task: str = Field(min_length=1)
+    neighbors: list[DeriveTaskHoursNeighbor] = Field(
+        description="Historical analogs (from search_budgets) whose hours anchor this task."
     )
-
-
-class CalculateEstimateArgs(BaseModel):
-    """Validated arguments for the ``calculate_estimate`` tool."""
-
-    components: list[ComponentInput]
 
 
 class ValidateComponentInput(BaseModel):
@@ -89,74 +116,69 @@ class ValidateEstimateArgs(BaseModel):
 
 
 # --------------------------------------------------------------------------- #
-# Trace models                                                                #
+# Phase 1 — structure proposal (no tools, no hours)                           #
 # --------------------------------------------------------------------------- #
-class AgentStep(BaseModel):
-    """One reason→act→observe step of the loop."""
+class AgentTaskNode(BaseModel):
+    """One task the agent proposes inside a module (structure only, no hours)."""
 
-    step: int = Field(ge=1)
-    reasoning_summary: str | None = Field(
-        default=None,
-        description="Model reasoning summary for this step (Responses API reasoning summary).",
-    )
-    tool: str = Field(description="Name of the invoked tool.")
-    tool_args: dict[str, Any] = Field(description="Arguments the model passed to the tool.")
-    observation: str = Field(description="Human-readable summary of the tool result.")
+    name: str = Field(min_length=1)
+    description: str | None = Field(default=None, description="One-line scope of the task.")
 
 
-class AgentTrace(BaseModel):
-    """Ordered record of everything the agent did, for auditing and the deliverable."""
+class AgentModuleNode(BaseModel):
+    """One functional module the agent proposes, decomposed into tasks."""
 
-    steps: list[AgentStep] = Field(default_factory=list)
-
-    def render(self) -> str:
-        """Render the trace in the ``STEP N`` console format from the statement."""
-        if not self.steps:
-            return "(no tool steps — the agent answered without calling any tool)"
-        blocks: list[str] = []
-        for s in self.steps:
-            reasoning = s.reasoning_summary or "(no reasoning summary emitted)"
-            args = _CONTROL_CHARS.sub("", json.dumps(s.tool_args, ensure_ascii=False, default=str))
-            blocks.append(
-                f"STEP {s.step}\n"
-                f"  reasoning:   {reasoning}\n"
-                f"  action:      {s.tool}({args})\n"
-                f"  observation: {s.observation}"
-            )
-        return "\n\n".join(blocks)
+    name: str = Field(min_length=1)
+    description: str | None = Field(default=None, description="What this module covers.")
+    tasks: list[AgentTaskNode] = Field(default_factory=list)
 
 
-# --------------------------------------------------------------------------- #
-# Result models                                                               #
-# --------------------------------------------------------------------------- #
-class AgentComponent(BaseModel):
-    """One costed component in the final estimate."""
+class AgentStructure(BaseModel):
+    """The agent's phase-1 output: the module→task tree, no hours, no sources.
 
-    name: str
-    estimated_hours: float = Field(ge=0)
-    cited_chunk_ids: list[int] = Field(
-        default_factory=list,
-        description="DB ids of the historical chunks that grounded this component.",
-    )
-    rationale: str = Field(description="Why this number, in one or two sentences.")
+    Deliberately rag-free (no ``SourceReference`` / ``engineer_days``): the
+    conductor maps it onto the heavy RAG ``Estimate`` the wizard renders, filling
+    ``engineer_days=None`` / ``grounded=False`` so the per-task hours step derives
+    the numbers afterwards.
+    """
 
-
-class AgentEstimate(BaseModel):
-    """The agent's final structured estimate (light — no mandatory citations)."""
-
-    components: list[AgentComponent]
-    total_hours: float = Field(ge=0)
-    assumptions: list[str] = Field(default_factory=list)
+    modules: list[AgentModuleNode] = Field(default_factory=list)
     confidence: Confidence
+    reasoning: str = Field(description="How the decomposition was reasoned.")
 
 
-class AgentRunResult(BaseModel):
-    """Everything a single agent run produces: the estimate plus its trace."""
+# --------------------------------------------------------------------------- #
+# Phase 2 — hours recovery (loop over the flagged tasks only)                  #
+# --------------------------------------------------------------------------- #
+class AgentTaskRef(BaseModel):
+    """One approved task the deterministic pass could not ground, handed to the
+    recovery agent with the reason it was flagged."""
 
-    estimate: AgentEstimate | None = Field(
-        default=None,
-        description="None when the loop stopped before producing a parseable estimate.",
-    )
+    module: str
+    task: str
+    description: str | None = None
+    reason: str = Field(description="Why the deterministic pass flagged this task.")
+
+
+class AgentTaskDerivation(BaseModel):
+    """Hours the recovery agent derived for one flagged task.
+
+    Mirrors the fields the conductor merges back onto the deterministic
+    ``TaskHoursEstimate``. ``has_match=False`` means the agent searched but still
+    found nothing usable — the row stays red.
+    """
+
+    module: str
+    task: str
+    estimated_hours: int | None = Field(default=None, ge=0)
+    reliability: float | None = Field(default=None, ge=0.0, le=1.0)
+    has_match: bool = False
+
+
+class AgentTaskHoursRun(BaseModel):
+    """Everything the phase-2 recovery loop produced: the derivations + trace."""
+
+    derivations: list[AgentTaskDerivation] = Field(default_factory=list)
     trace: AgentTrace
     iterations: int = Field(ge=0, description="Number of Responses API round-trips.")
-    stopped_reason: Literal["completed", "max_iterations", "no_final_estimate"] = "completed"
+    stopped_reason: Literal["completed", "max_iterations"] = "completed"

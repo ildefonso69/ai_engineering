@@ -48,11 +48,6 @@
     </td>
   <% end %>
 
-  <td class="p-2 w-28">
-    <input type="text" name="modules[<%= m %>][tasks][<%= t %>][sources]" value="<%= task&.sources_label %>"
-           placeholder="ids: 12, 14"
-           class="w-full border border-white/15 rounded p-2 text-white bg-ink/40 font-mono text-xs focus:outline-none focus:border-brand">
-  </td>
   <td class="p-2 text-center w-10">
     <button type="button" data-action="estimate-modules-editor#deleteTask"
             class="text-white/40 hover:text-brand cursor-pointer font-bold" title="Eliminar tarea">✕</button>
