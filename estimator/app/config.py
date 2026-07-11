@@ -234,6 +234,21 @@ class Settings(BaseSettings):
     AGENT_SEARCH_TOP_K: int = 5
     AGENT_SEARCH_DISTANCE_THRESHOLD: float = 0.6
 
+    # --- Session 13 fields (LangGraph estimation graph + observability) ---------
+    # The graph re-expresses the estimation flow as an explicit StateGraph inside
+    # the service (app/domain/graph). Its structured-output nodes go through
+    # LLMWrapper; small non-reasoning models keep the sequential demo cheap and
+    # fast. Both are in AVAILABLE_MODELS, so switchable in the Ajustes tab.
+    # Extraction/classification are simple structured calls a small model handles;
+    # consolidation must reliably populate numeric fields (gpt-4o-mini tends to
+    # leave engineer_days null), so it defaults to the stronger gpt-4o.
+    GRAPH_EXTRACTION_MODEL: str = "gpt-4o-mini"
+    GRAPH_GENERATION_MODEL: str = "gpt-4o"
+    # Logfire service name for the traces. The token itself is read by Logfire from
+    # the environment (LOGFIRE_TOKEN) — a run with no token executes every span
+    # locally but exports nothing, so observability never breaks startup.
+    LOGFIRE_SERVICE_NAME: str = "estimator"
+
     @model_validator(mode="after")
     def validate_at_least_one_api_key(self) -> "Settings":
         """LiteLLM may try either provider via fallback, so we require at least one key."""

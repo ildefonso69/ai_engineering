@@ -1,0 +1,36 @@
+==============================================================================
+SESSION 13 — ESTIMATION GRAPH RUN
+==============================================================================
+estimation_id : s13-sample_transcript_complex
+status        : validated
+
+REQUIREMENTS
+  - Develop a backend for order management, route assignment, shipment tracking, and rate calculation with an exposed API.
+  - Integrate with SAP ERP for synchronizing billing, customers, and master data, including IDoc mapping and middleware layer.
+  - Create a mobile app for delivery drivers on Android and iOS that shows daily routes, confirms deliveries with signature and photo, and operates offline with synchronization capabilities.
+  - Develop an analytics dashboard with KPIs for on-time deliveries, route costs, and incidents, including filtering by zone and customer, and alerts for abnormalities.
+
+COMPONENTS
+  - Order Management Backend API [backend]
+  - SAP ERP Integration [integration]
+  - Mobile Driver App [mobile]
+  - Delivery Analytics Dashboard [analytics]
+
+BUDGET MATCHES (accumulator field)
+  - Order Management Backend API: 1150h (ref BUD-CORE-2023-02, distance 0.4)
+  - Order Management Backend API: 940h (ref BUD-CORE-2022-09, distance 0.4)
+  - SAP ERP Integration: 860h (ref BUD-SAP-2023-05, distance 0.3)
+  - SAP ERP Integration: 720h (ref BUD-SAP-2021-12, distance 0.4)
+  - Mobile Driver App: 780h (ref BUD-APP-2023-03, distance 0.4)
+  - Mobile Driver App: 640h (ref BUD-APP-2022-06, distance 0.4)
+  - Mobile Driver App: 430h (ref BUD-BI-2022-04, distance 0.5)
+  - Delivery Analytics Dashboard: 560h (ref BUD-BI-2023-01, distance 0.4)
+  - Delivery Analytics Dashboard: 430h (ref BUD-BI-2022-04, distance 0.5)
+  (9 matches total)
+
+ESTIMATE
+  - Order Management Backend API [backend]: 130d — Converted reference hours to days: 1150h = 143.75d, 940h = 117.5d. Rounded median of days = 130.
+  - SAP ERP Integration [integration]: 101d — Converted reference hours to days: 860h = 107.5d, 720h = 90d. Rounded median of days = 101.
+  - Mobile Driver App [mobile]: 86d — Converted reference hours to days: 780h = 97.5d, 640h = 80d, 430h = 53.75d. Rounded median of days = 86.
+  - Delivery Analytics Dashboard [analytics]: 62d — Converted reference hours to days: 560h = 70d, 430h = 53.75d. Rounded median of days = 62.
+  TOTAL: 379d (confidence medium)

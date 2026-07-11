@@ -40,7 +40,8 @@ app/
 │
 ├── domain/                 # contrato + conductor
 │   ├── schemas/            #   EstimationRequest/Result/Response (contrato con Rails)
-│   └── estimation_service.py  # EstimationService — ÚNICO punto de composición
+│   ├── estimation_service.py  # EstimationService — punto de composición del pipeline fijo
+│   └── graph/              #   S13: el flujo como StateGraph de LangGraph (otro conductor)
 │
 ├── generation/             # las 3 arquitecturas que componen + substrato conversacional
 │   ├── cag/                #   exact.py + semantic.py
@@ -93,6 +94,17 @@ capas. Sus tres entradas y qué tocan:
 
 Cuando RAG entre en el camino de petición (S8+), el paso de retrieval se añade **aquí**, como
 un step más del conductor, no dentro de otra capa.
+
+**Sesión 13 — el grafo también es conductor.** El grafo de LangGraph
+(`app/domain/graph/`) re-expresa el flujo de estimación como cinco nodos secuenciales sobre un
+estado tipado. Compone `generation/rag` (retrieval) + `foundation/llm` (generación), así que
+vive **en `domain/`, junto a `estimation_service.py`** — es un conductor más, no un hermano de
+`generation`. Sus nodos son funciones puras `state → actualización parcial` que se auto-cablean
+las dependencias con imports locales `from app.dependencies import ...` (el mismo toque tolerado
+que usa `app/generation/rag/agent_retrieval.py`), de modo que ninguna capa de `generation` se
+importa entre sí. La persistencia (checkpointer `AsyncPostgresSaver` sobre el Postgres del
+proyecto) y la observabilidad (Logfire, un span por nodo) se cablean en el `lifespan` de
+`main.py`; el endpoint `POST /v1/estimate/graph` (`api/`) sólo invoca `app.state.graph`.
 
 ## 5. Composition root
 
