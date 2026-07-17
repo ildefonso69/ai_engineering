@@ -8,6 +8,8 @@
   queda almacenada.
 </p>
 
+<%= render "step_agent", keys: [ "gate_analysis" ], note: "validación humana" %>
+
 <% if !run.step_complete?("hours") %>
   <div class="p-4 rounded-md bg-brand/15 border border-brand text-brand-soft">
     Aún no hay horas estimadas. Vuelve a

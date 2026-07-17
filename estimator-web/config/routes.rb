@@ -41,12 +41,26 @@ Rails.application.routes.draw do
         patch :verify         # edit hours/rates, compute cost, confirm + store
       end
     end
+
+    # Session 13 — the graph-driven wizard: the service IA orchestrates a LangGraph
+    # multi-agent flow that pauses at two human gates; we START it and RESUME it.
+    resources :graph_estimation_runs, only: [ :index, :new, :create, :show ] do
+      member do
+        post :resume_structure # human gate 1 → resume with the reviewed breakdown
+        post :resume_final     # human gate 2 → resume with the final validation
+        get  :progress         # live per-agent activity feed (polled while a leg runs)
+        post :generate_proposal # draft/redraft the commercial proposal after completion
+        get  :proposal_pdf      # download the proposal as a PDF (Prawn)
+      end
+    end
   end
 
   # Session 12 — agents console: named, personalizable profiles for the
   # hand-written agent (the ACB is shown read-only here).
   namespace :agents do
     resources :profiles
+    # Session 13 — read-only visual resource of the multi-agent graph flow.
+    get "graph_flow", to: "graph_flow#show"
   end
 
   # Runtime model configuration of the AI service (Ajustes).

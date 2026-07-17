@@ -241,12 +241,8 @@ class RagEstimationRunsControllerTest < ActionDispatch::IntegrationTest
 
   # --- agent profile forwarding (S12) ----------------------------------------
 
-  test "generate forwards the selected profile's overrides + persona to the agent" do
+  test "generate runs with the fixed Neo persona (no agent selection)" do
     run = run_with_reformulation
-    profile = Agents::Profile.create!(
-      name: "Veloz", persona: "Ve al grano.",
-      config: { "model" => "gpt-5-mini", "reasoning_effort" => "low", "max_iterations" => "6" }
-    )
     captured_body = nil
     stub_request(:post, %r{/v1/estimate/agent/structure})
       .with { |req| captured_body = JSON.parse(req.body); true }
@@ -256,13 +252,31 @@ class RagEstimationRunsControllerTest < ActionDispatch::IntegrationTest
         fabricated_source_ids: [], coherent: true
       }.to_json, headers: { "Content-Type" => "application/json" })
 
-    post generate_rag_estimation_run_path(run), params: { profile_id: profile.id }
+    # No profile_id: each step now has its own fixed agent.
+    post generate_rag_estimation_run_path(run), params: {}
 
-    assert_equal "gpt-5-mini", captured_body["model"]
-    assert_equal "low", captured_body["reasoning_effort"]
-    assert_equal 6, captured_body["max_iterations"]
-    assert_equal "Ve al grano.", captured_body["persona"]
+    assert captured_body["persona"].to_s.start_with?("You are Neo"), "structure step must run as Neo"
+    # config is empty now → no model/effort overrides forwarded (service defaults win).
+    assert_nil captured_body["model"]
+    assert_nil captured_body["reasoning_effort"]
     assert captured_body.key?("query")
+  end
+
+  test "estimate_hours runs the recovery with the fixed Trinity persona" do
+    run = run_with_reformulation
+    run.update!(structure: { "modules" => [ { "name" => "Backend",
+      "tasks" => [ { "name" => "API", "description" => "REST" } ] } ] }, status: "generated")
+    captured_body = nil
+    stub_request(:post, %r{/v1/estimate/agent/hours})
+      .with { |req| captured_body = JSON.parse(req.body); true }
+      .to_return(status: 200, body: { modules: [], total_engineer_days: 0 }.to_json,
+                 headers: { "Content-Type" => "application/json" })
+
+    post estimate_hours_rag_estimation_run_path(run),
+         params: { modules: { "0" => { name: "Backend", tasks: { "0" => { name: "API" } } } } }
+
+    assert captured_body["persona"].to_s.start_with?("You are Trinity"), "hours recovery must run as Trinity"
+    assert_nil captured_body["model"]
   end
 
   test "estimate_hours surfaces a guardrail rejection as a flash" do

@@ -244,6 +244,31 @@ class Settings(BaseSettings):
     # leave engineer_days null), so it defaults to the stronger gpt-4o.
     GRAPH_EXTRACTION_MODEL: str = "gpt-4o-mini"
     GRAPH_GENERATION_MODEL: str = "gpt-4o"
+
+    # --- Session 13 (live) — the multi-agent orchestration ------------------- #
+    # The graph grows from the pre-exercise 5-node pipeline into a pipeline of
+    # SPECIALISED AGENTS with explicit handovers and two human gates. Each agent
+    # node uses a model sized to its job; the two gpt-5 agents (structure,
+    # hours-recovery) reuse AGENT_MODEL / AGENT_* below.
+    GRAPH_CLASSIFIER_MODEL: str = "gpt-4o-mini"  # complexity + reformulation (cheap)
+    GRAPH_ANALYSIS_MODEL: str = "gpt-4o"  # reliability report needs the stronger model
+    GRAPH_PROPOSAL_MODEL: str = "gpt-4o"  # commercial proposal (bonus)
+    # The bonus proposal_agent is opt-out via config: flip to false to end the graph
+    # right after the final human gate (no proposal drafted).
+    GRAPH_PROPOSAL_ENABLED: bool = True
+    # Session 13 live (didactic): each graph agent is "played" by a Matrix character
+    # whose short persona is prepended to its system prompt. Flip to false to run the
+    # agents plain (personas never change the required output shape; see graph/personas.py).
+    GRAPH_PERSONAS_ENABLED: bool = True
+    # classifier's complexity → structure_agent reasoning effort. A richer transcript
+    # gets more thinking budget; a simple one stays cheap. Kept as a plain dict so the
+    # mapping is data, not a code branch.
+    GRAPH_STRUCTURE_EFFORT_BY_COMPLEXITY: dict[str, str] = {
+        "low": "low",
+        "medium": "medium",
+        "high": "high",
+    }
+
     # Logfire service name for the traces. The token itself is read by Logfire from
     # the environment (LOGFIRE_TOKEN) — a run with no token executes every span
     # locally but exports nothing, so observability never breaks startup.

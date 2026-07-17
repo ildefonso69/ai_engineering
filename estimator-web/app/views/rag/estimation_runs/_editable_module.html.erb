@@ -43,7 +43,9 @@
     </thead>
     <tbody data-tasks-container class="divide-y divide-white/10">
       <% Array(tasks).each do |t, task| %>
-        <%= render "editable_task", m: m, t: t, task: task, mode: mode %>
+        <%# Explicit path: this partial is shared by the graph wizard too, where a
+            relative "editable_task" would resolve under rag/graph_estimation_runs. %>
+        <%= render "rag/estimation_runs/editable_task", m: m, t: t, task: task, mode: mode %>
       <% end %>
     </tbody>
   </table>

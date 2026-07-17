@@ -8,7 +8,10 @@
       Un agente es <span class="text-white font-bold">un bucle</span>: un modelo que decide, unas
       tools que ejecutan, una condición de parada. Aquí revisas cada agente y creas
       <span class="text-white font-bold">perfiles</span> nombrados y personalizados (modelo, esfuerzo,
-      iteraciones, recuperación y una <span class="text-white font-bold">persona</span>).
+      iteraciones, recuperación y una <span class="text-white font-bold">persona</span>). Desde la S13
+      conviven tres estilos: el <span class="text-white font-bold">agente hecho a mano</span> (S12), la
+      orquestación <span class="text-white font-bold">Actor-Critic-Boss</span> (S4/S5) y el nuevo
+      <span class="text-white font-bold">flujo multi-agente por grafo</span> (S13).
     </p>
   </div>
 
@@ -86,6 +89,66 @@
         </tbody>
       </table>
     <% end %>
+  </section>
+
+  <%# --- Agentes del grafo (S13): informativo, solo lectura -------------- %>
+  <% kind_badges = {
+       agent: "bg-brand/15 text-brand",
+       gate: "bg-amber-400/15 text-amber-300",
+       fanout: "bg-sky-400/15 text-sky-300",
+       join: "bg-white/10 text-white/60"
+     } %>
+  <section class="rounded-md border border-white/10 overflow-hidden mb-8">
+    <div class="bg-ink/40 px-4 py-3 flex items-center justify-between gap-4">
+      <div>
+        <h2 class="text-lg font-bold tracking-tight text-white">Agentes del grafo (S13)</h2>
+        <p class="text-white/50 text-xs mt-0.5 max-w-2xl">
+          El pipeline de estimación reexpresado como un <span class="text-white/80">grafo LangGraph</span>:
+          agentes especializados encadenados con dos <span class="text-white/80">handovers</span>
+          (<code class="text-brand">Command(goto)</code>) y dos <span class="text-white/80">gates humanos</span>
+          (<code class="text-brand">interrupt()</code>). Solo lectura — sus modelos se fijan por
+          <code class="font-mono text-white/60">.env</code> en el servicio IA.
+        </p>
+      </div>
+      <%= link_to agents_graph_flow_path,
+            class: "shrink-0 inline-flex items-center px-4 py-2 bg-brand text-ink-dark font-bold tracking-tight rounded-md hover:bg-brand-strong transition-colors text-sm" do %>
+        Ver el flujo →
+      <% end %>
+    </div>
+
+    <ul class="divide-y divide-white/10">
+      <% Agents::GraphFlow::NODES.each do |node| %>
+        <% ch = Agents::GraphFlow.character_for(node.key) %>
+        <li class="px-4 py-3.5 flex flex-col sm:flex-row sm:items-start gap-3">
+          <div class="sm:w-56 shrink-0">
+            <div class="flex items-center gap-2">
+              <% if ch %>
+                <span class="shrink-0 h-7 w-7 rounded-full border flex items-center justify-center text-sm <%= ch.classes %>" title="<%= ch.name %>"><%= ch.avatar %></span>
+              <% end %>
+              <span class="font-bold text-white"><%= ch&.name || node.label %></span>
+              <span class="text-xs font-bold uppercase tracking-tight px-1.5 py-0.5 rounded <%= kind_badges.fetch(node.kind, "bg-white/10 text-white/60") %>">
+                <%= Agents::GraphFlow.kind_label(node.kind) %>
+              </span>
+            </div>
+            <div class="text-white/40 text-xs mt-0.5"><%= node.label %><% if ch %> · «<%= ch.tagline %>»<% end %></div>
+            <div class="mt-1 text-xs">
+              <% if node.model %>
+                <span class="font-mono text-white/80"><%= node.model %></span>
+              <% else %>
+                <span class="text-white/40">sin modelo</span>
+              <% end %>
+            </div>
+            <% if node.config_key %>
+              <div class="text-white/30 text-xs font-mono mt-0.5"><%= node.config_key %></div>
+            <% end %>
+          </div>
+          <div class="min-w-0">
+            <p class="text-sm text-white/80 font-bold tracking-tight"><%= node.role %></p>
+            <p class="text-white/50 text-xs mt-1 leading-relaxed"><%= node.explanation %></p>
+          </div>
+        </li>
+      <% end %>
+    </ul>
   </section>
 
   <%# --- Actor-Critic-Boss (S4/S5): informativo, solo lectura ------------- %>

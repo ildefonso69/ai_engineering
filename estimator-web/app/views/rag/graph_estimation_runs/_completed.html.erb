@@ -1,0 +1,53 @@
+<% estimate = run.estimate %>
+
+<div class="flex items-center gap-3 mb-5">
+  <h2 class="text-lg font-bold tracking-tight text-white">Flujo completado</h2>
+  <span class="px-2.5 py-0.5 rounded-md text-xs font-bold <%= run.status == "validated" ? "bg-success/15 border border-success/40 text-success-light" : "bg-brand/15 border border-brand text-brand-soft" %>">
+    <%= run.status || "—" %>
+  </span>
+</div>
+
+<div class="rounded-md border border-white/10 overflow-hidden mb-6">
+  <div class="bg-ink/40 px-4 py-2 flex items-center justify-between">
+    <span class="text-sm font-bold text-white/80">Estimación validada</span>
+    <span class="text-sm font-mono text-white/70"><%= run.total_engineer_days %> días · <%= run.total_engineer_hours.round %> h</span>
+  </div>
+  <div class="divide-y divide-white/10">
+    <% run.estimate_modules.each do |mod| %>
+      <div class="px-4 py-2.5 flex items-center justify-between">
+        <span class="text-sm text-white/80"><%= mod.name %></span>
+        <span class="text-xs font-mono text-white/60"><%= mod.subtotal_hours %>h · <%= mod.tasks.size %> tareas</span>
+      </div>
+    <% end %>
+  </div>
+</div>
+
+<% if run.analysis_report? %>
+  <div class="mb-6"><%= render "reliability_report", report: run.analysis_report %></div>
+<% end %>
+
+<div class="rounded-md border border-white/10 bg-ink/30 p-5">
+  <div class="flex items-center justify-between gap-3 mb-3 flex-wrap">
+    <div class="text-xs uppercase tracking-tight font-bold text-white/50">Propuesta comercial · El Arquitecto</div>
+    <div class="flex items-center gap-2">
+      <% if run.proposal? %>
+        <%= link_to "Descargar PDF", proposal_pdf_rag_graph_estimation_run_path(run),
+              class: "inline-flex items-center px-3 py-1.5 bg-white/10 text-white font-bold rounded-md hover:bg-white/20 transition-colors text-xs" %>
+      <% end %>
+      <%= button_to (run.proposal? ? "Regenerar" : "Generar propuesta"),
+            generate_proposal_rag_graph_estimation_run_path(run), method: :post,
+            form: { data: { turbo: false } },
+            class: "inline-flex items-center px-3 py-1.5 bg-brand text-ink-dark font-bold rounded-md hover:bg-brand-strong cursor-pointer transition-colors text-xs" %>
+    </div>
+  </div>
+  <% if run.proposal? %>
+    <% if run.proposal_title.present? %>
+      <h3 class="text-white font-bold text-base mb-2"><%= run.proposal_title %></h3>
+    <% end %>
+    <div class="prose prose-invert prose-sm max-w-none whitespace-pre-wrap text-white/80"><%= run.proposal %></div>
+  <% else %>
+    <p class="text-white/50 text-sm">
+      No se generó propuesta en la puerta 2. El Arquitecto puede redactarla ahora desde la estimación validada.
+    </p>
+  <% end %>
+</div>

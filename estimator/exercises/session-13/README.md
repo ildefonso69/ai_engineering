@@ -92,3 +92,37 @@ y dobles del `LLMWrapper` + backend de retrieval.
 ```bash
 uv run pytest tests/domain/graph -v
 ```
+
+## En el directo (rama `session_13_live`)
+
+El directo hace crecer este grafo secuencial de 5 nodos hasta un **pipeline multi-agente** con dos
+handovers explícitos y dos puertas humanas. Los nodos pasan a ser agentes especializados en
+`app/domain/graph/agents/`:
+
+```
+classifier_agent  ─Command(goto)─▶  structure_agent  ─▶  🧑 puerta 1 (interrupt)
+   ─Send fan-out por tarea─▶  estimate_task_hours ×N  ─join─▶  recover_and_handover
+   ─Command(goto)─▶  analysis_agent  ─▶  🧑 puerta 2 (interrupt)  ─cond─▶  proposal_agent | END
+```
+
+Novedades que se explican en la sesión (todo en `app/domain/graph/`):
+
+- **Handovers** con `Command(goto=…, update=…)` (`classifier→structure`, `recover→analysis`): pasan
+  control **y** estado.
+- **Puertas humanas** con `interrupt()` (en `agents/gates.py`), reanudadas por el backend de negocio
+  con `Command(resume=…)`. El estado sobrevive a la pausa gracias al checkpointer.
+- **Fan-out** por tarea con la Send API + un reducer **keyed** (`merge_task_hours`) idempotente ante
+  reanudación (evita el doble-append).
+- **Recuperación agéntica** de tareas dudosas en el join (reutiliza `run_task_hours_recovery_agent`).
+- **Endpoints** `POST /v1/estimate/graph` (arranque) + `POST …/{id}/resume` + `GET …/{id}/state`.
+- **Wizard de grafo en Rails** (`estimator-web`) que arranca y reanuda las dos puertas.
+
+Recórrelo entero (auto-aprobando las puertas) con:
+
+```bash
+docker compose exec estimator python scripts/run_graph_s13.py --out data/example_run_complex.txt
+# o offline (sin DB, horas enlatadas; necesita OPENAI para los agentes LLM):
+uv run python scripts/run_graph_s13.py --memory --stub
+```
+
+Guía del instructor: `guides/session-13-live-guide.md`.

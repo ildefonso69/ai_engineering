@@ -28,6 +28,7 @@ from app.ingestion.loaders.filesystem import FileSystemLoader
 from app.ingestion.parsers.registry import ParserRegistry, default_registry
 from app.generation.cag.exact import EstimationCache
 from app.domain.estimation_service import EstimationService
+from app.domain.graph.activity import GraphActivityLog
 from app.foundation.llm.runtime_config import RuntimeModelConfig, RuntimeRetrievalConfig
 from app.foundation.llm.wrapper import LLMWrapper
 from app.foundation.persistence.database import get_async_session_factory
@@ -55,6 +56,16 @@ def get_runtime_config() -> RuntimeModelConfig:
     """
     settings = get_settings()
     return RuntimeModelConfig.from_url(settings.REDIS_URL, settings)
+
+
+@lru_cache
+def get_graph_activity() -> GraphActivityLog:
+    """Redis-backed (or in-process) per-run activity log for the live graph panel.
+
+    The singleton is just the Redis handle; the streaming loop appends to it and the
+    ``/progress`` endpoint reads it, so freshness comes from Redis, not from
+    rebuilding this object."""
+    return GraphActivityLog.from_settings(get_settings())
 
 
 @lru_cache

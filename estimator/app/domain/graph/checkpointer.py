@@ -11,6 +11,15 @@ plain libpq DSN (``postgresql://user:pass@host/db``) — NOT the SQLAlchemy
 the single ``DATABASE_URL`` by stripping the driver token, mirroring
 ``_async_database_url`` in ``app/foundation/persistence/database.py`` (which swaps
 the token for the SQLAlchemy async engine instead).
+
+Live-session change (Session 13): the flow now PAUSES at two human gates and may sit
+idle for minutes or days before a resume. A single long-lived connection (the
+pre-exercise ``from_conn_string``) can be dropped by the server or a NAT during that
+idle, so a resume would hit a dead socket. We back the saver with an
+``AsyncConnectionPool`` instead: it validates/reconnects connections on checkout, so
+a days-later resume gets a live connection. The saver needs each connection in
+``autocommit`` mode with server-side prepares off and a dict row factory — the same
+kwargs ``from_conn_string`` set, passed here through the pool.
 """
 
 from __future__ import annotations
@@ -20,10 +29,17 @@ from typing import AsyncIterator
 
 import structlog
 from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
+from psycopg.rows import dict_row
+from psycopg_pool import AsyncConnectionPool
 
 from app.config import Settings, get_settings
 
 log = structlog.get_logger()
+
+# The AsyncPostgresSaver requires connections in this shape (mirrors from_conn_string).
+_CONNECTION_KWARGS = {"autocommit": True, "prepare_threshold": 0, "row_factory": dict_row}
+_POOL_MIN_SIZE = 1
+_POOL_MAX_SIZE = 10
 
 
 def saver_conninfo(settings: Settings | None = None) -> str:
@@ -41,15 +57,27 @@ def saver_conninfo(settings: Settings | None = None) -> str:
 
 @asynccontextmanager
 async def open_checkpointer() -> AsyncIterator[AsyncPostgresSaver]:
-    """Open an ``AsyncPostgresSaver`` over the project Postgres and set it up.
+    """Open a pooled ``AsyncPostgresSaver`` over the project Postgres and set it up.
 
     ``setup()`` is idempotent — it creates the checkpointer tables on first run and
     is a no-op afterwards — so calling it on every startup is safe. Use as an async
     context manager (e.g. entered into the app's ``AsyncExitStack`` in ``lifespan``)
-    so the underlying connection is closed on shutdown.
+    so the pool is closed on shutdown. The pool reconnects dropped connections, so a
+    resume after a long human pause always gets a live connection.
     """
     conninfo = saver_conninfo()
-    async with AsyncPostgresSaver.from_conn_string(conninfo) as checkpointer:
+    pool = AsyncConnectionPool(
+        conninfo=conninfo,
+        min_size=_POOL_MIN_SIZE,
+        max_size=_POOL_MAX_SIZE,
+        kwargs=_CONNECTION_KWARGS,
+        open=False,
+    )
+    await pool.open(wait=True)
+    try:
+        checkpointer = AsyncPostgresSaver(pool)
         await checkpointer.setup()
-        log.info("graph_checkpointer_ready")
+        log.info("graph_checkpointer_ready", pool_max=_POOL_MAX_SIZE)
         yield checkpointer
+    finally:
+        await pool.close()

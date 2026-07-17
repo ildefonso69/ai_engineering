@@ -9,9 +9,10 @@
   búsqueda semántica (paso «Horas»). Tú revisas y editas el árbol en el siguiente paso.
 </p>
 
+<%= render "step_agent", keys: [ "structure" ] %>
+
   <%= form_with url: generate_rag_estimation_run_path(run), method: :post, local: true,
         class: "mb-6", data: { controller: "form-loading", action: "submit->form-loading#start" } do %>
-    <%= render "agent_profile_select" %>
     <button type="submit" data-form-loading-target="submit" data-disable-with="false"
             class="inline-flex items-center px-5 py-2.5 bg-brand text-ink-dark font-bold tracking-tight rounded-md hover:bg-brand-strong cursor-pointer transition-colors text-sm disabled:cursor-not-allowed">
       <span data-form-loading-target="label"><%= view ? "Re-generar estructura" : "Generar estructura" %></span>

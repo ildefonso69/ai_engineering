@@ -71,5 +71,65 @@ module EstimatorAi
       body = { modules: modules, persona: persona }.merge(config || {}).compact
       handle_response(json_conn.post("/v1/estimate/agent/hours", body))
     end
+
+    # Session 13 — the estimation flow is now a LangGraph multi-agent graph inside the
+    # service IA that PAUSES at two human gates. The business backend orchestrates the
+    # human part: START the run, then RESUME it with the person's decision at each gate.
+    # All three return the same GraphRunState shape
+    # ({ estimation_id, state: "paused"|"completed", pending_gate, structure, estimate,
+    #    analysis_report, proposal, status, ... }); the pattern is stack-agnostic (any
+    # HTTP client can drive resume). thread_id == estimation_id.
+
+    # START — runs classifier + structure agents, pauses at human gate 1 (structure
+    # review). Returns state "paused" with pending_gate.gate == "structure_review".
+    def graph_start(transcript:, estimation_id: nil)
+      body = { transcript: transcript, estimation_id: estimation_id }.compact
+      handle_response(json_conn.post("/v1/estimate/graph", body))
+    end
+
+    # RESUME — feed the human's decision for the current gate. From gate 1
+    # ({ approved:, modules: }) it runs the hours + analysis agents and pauses at gate 2;
+    # from gate 2 ({ validated:, estimate_overrides:, want_proposal: }) it finishes
+    # (optionally drafting a proposal). 409 if nothing is pending for this id.
+    def graph_resume(estimation_id:, decision:)
+      handle_response(json_conn.post("/v1/estimate/graph/#{estimation_id}/resume",
+                                     { decision: decision }))
+    end
+
+    # STATE — read the current snapshot (pending gate + artifacts). Lets the UI recover
+    # a run paused for minutes or days.
+    def graph_state(estimation_id:)
+      handle_response(json_conn.get("/v1/estimate/graph/#{estimation_id}/state"))
+    end
+
+    # --- LIVE variant (Session 13 live) --------------------------------------
+    # The *_stream verbs run the graph in the BACKGROUND on the service and return
+    # 202 immediately (state "running"); the wizard then polls #graph_progress to
+    # fill a live per-agent panel. Same thread_id/idempotency as the blocking verbs.
+
+    # START in the background. 202 + { state: "running", activity: [] }.
+    def graph_start_stream(transcript:, estimation_id: nil)
+      body = { transcript: transcript, estimation_id: estimation_id }.compact
+      handle_response(json_conn.post("/v1/estimate/graph/stream", body))
+    end
+
+    # RESUME in the background. 202 + { state: "running" }. 409 if nothing pending.
+    def graph_resume_stream(estimation_id:, decision:)
+      handle_response(json_conn.post("/v1/estimate/graph/#{estimation_id}/resume-stream",
+                                     { decision: decision }))
+    end
+
+    # POLL — { state: "running"|"paused"|"completed", activity: [...], + artifacts }.
+    def graph_progress(estimation_id:)
+      handle_response(json_conn.get("/v1/estimate/graph/#{estimation_id}/progress"))
+    end
+
+    # PROPOSAL — draft (or re-draft) the commercial proposal from the run's validated
+    # estimate, WITHOUT re-running the graph. Returns the full CommercialProposal
+    # { title, executive_summary, scope, total_engineer_days, body_markdown }.
+    # 409 if the run has no validated estimate yet.
+    def graph_proposal(estimation_id:)
+      handle_response(json_conn.post("/v1/estimate/graph/#{estimation_id}/proposal"))
+    end
   end
 end

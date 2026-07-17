@@ -54,7 +54,9 @@ module EstimatorAi
 
     def handle_response(response)
       case response.status
-      when 200
+      when 200, 202
+        # 202 Accepted: the async graph *stream verbs return the initial "running"
+        # progress; the body is still the parsed JSON we want.
         response.body
       when 400
         detail = extract_detail(response.body)

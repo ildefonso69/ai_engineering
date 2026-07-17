@@ -10,7 +10,7 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[8.0].define(version: 2026_07_09_110149) do
+ActiveRecord::Schema[8.0].define(version: 2026_07_16_130000) do
   # These are extensions that must be enabled in order to support this database
   enable_extension "pg_catalog.plpgsql"
 
@@ -108,6 +108,25 @@ ActiveRecord::Schema[8.0].define(version: 2026_07_09_110149) do
     t.bigint "chat_session_id"
     t.index ["chat_session_id"], name: "index_estimations_on_chat_session_id"
     t.index ["created_at"], name: "index_estimations_on_created_at"
+  end
+
+  create_table "graph_estimation_runs", force: :cascade do |t|
+    t.text "transcript", null: false
+    t.string "estimation_id", null: false
+    t.string "graph_state", default: "paused", null: false
+    t.string "current_gate"
+    t.string "status"
+    t.jsonb "pending_gate", default: {}, null: false
+    t.jsonb "structure", default: {}, null: false
+    t.jsonb "estimate", default: {}, null: false
+    t.jsonb "analysis_report", default: {}, null: false
+    t.jsonb "task_hours", default: {}, null: false
+    t.text "proposal"
+    t.datetime "created_at", null: false
+    t.datetime "updated_at", null: false
+    t.string "proposal_title"
+    t.index ["created_at"], name: "index_graph_estimation_runs_on_created_at"
+    t.index ["estimation_id"], name: "index_graph_estimation_runs_on_estimation_id", unique: true
   end
 
   create_table "index_runs", force: :cascade do |t|

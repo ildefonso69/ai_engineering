@@ -1,8 +1,10 @@
 """The typed state's accumulator reducers (Level 1).
 
 ``budget_matches`` and ``errors`` are annotated with ``operator.add`` so LangGraph
-CONCATENATES partial updates instead of overwriting. We assert that both on the
-annotation metadata and on the compiled channel behaviour (no LLM needed).
+CONCATENATES partial updates instead of overwriting. ``task_hours`` uses the KEYED
+``merge_task_hours`` reducer instead — idempotent by ``(module, task)`` so a resume
+that re-enters the fan-out cannot duplicate rows. We assert those on the annotation
+metadata, the compiled channel behaviour and the reducer's own semantics (no LLM).
 """
 
 from __future__ import annotations
@@ -13,7 +15,7 @@ import typing
 from langgraph.channels import BinaryOperatorAggregate
 from langgraph.graph import END, START, StateGraph
 
-from app.domain.graph.state import EstimationState
+from app.domain.graph.state import EstimationState, merge_task_hours
 
 
 def _channels():
@@ -55,3 +57,31 @@ def test_errors_reducer_appends_without_clobbering():
     channel.update([["first issue"]])
     channel.update([["second issue"]])
     assert channel.get() == ["first issue", "second issue"]
+
+
+def test_task_hours_reducer_is_keyed_not_operator_add():
+    hints = typing.get_type_hints(EstimationState, include_extras=True)
+    metadata = getattr(hints["task_hours"], "__metadata__", ())
+    # Keyed reducer, NOT operator.add (that would double-append on a resume).
+    assert merge_task_hours in metadata
+    assert operator.add not in metadata
+
+
+def test_merge_task_hours_dedupes_by_module_and_task():
+    existing = [
+        {"module": "Backend", "task": "API", "estimated_hours": 40},
+        {"module": "Backend", "task": "Auth", "estimated_hours": 20},
+    ]
+    # Re-emitting "API" (e.g. after agentic recovery) REPLACES, never appends.
+    new = [{"module": "Backend", "task": "API", "estimated_hours": 64, "has_match": True}]
+    merged = merge_task_hours(existing, new)
+    by_task = {(t["module"], t["task"]): t["estimated_hours"] for t in merged}
+    assert by_task == {("Backend", "API"): 64, ("Backend", "Auth"): 20}
+    assert len(merged) == 2  # idempotent: no duplicate row for API
+
+
+def test_merge_task_hours_handles_empty_sides():
+    assert merge_task_hours(None, [{"module": "M", "task": "T", "estimated_hours": 8}]) == [
+        {"module": "M", "task": "T", "estimated_hours": 8}
+    ]
+    assert merge_task_hours([{"module": "M", "task": "T"}], None) == [{"module": "M", "task": "T"}]

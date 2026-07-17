@@ -21,6 +21,11 @@ gem "jbuilder"
 
 # HTTP client used by app/services/estimator_ai/client.rb
 gem "faraday"
+
+# Session 13 — pure-Ruby PDF generation for the commercial proposal export
+# (no system binary needed, unlike wkhtmltopdf/headless-chrome).
+gem "prawn"
+gem "prawn-table"
 # Multipart upload support (Session 5: attachments)
 gem "faraday-multipart"
 

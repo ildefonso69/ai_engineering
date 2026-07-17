@@ -1,18 +1,27 @@
-"""The graph's shared, typed state (Level 1).
+"""The graph's shared, typed state (Level 1 → the live multi-agent flow).
 
 A LangGraph ``StateGraph`` threads ONE state object through every node; each node
 returns a *partial* update and LangGraph merges it in. For most fields the merge is
 last-writer-wins (the update replaces the value). For a field annotated with a
-**reducer** the merge is delegated to that reducer instead — here ``operator.add``,
-so a node can return only the *new* items and LangGraph appends them to what prior
-nodes accumulated.
+**reducer** the merge is delegated to that reducer instead, so a node can return
+only the *new* items and LangGraph combines them with what prior nodes accumulated.
 
-Two accumulator fields use that pattern (the statement asks for at least one):
+Three accumulator fields use that pattern:
 
-* ``budget_matches`` — ``search_budgets`` searches each component one at a time and
-  returns only that component's matches; the reducer grows the list across the loop
-  (and, once the live session parallelises the search, across concurrent branches).
-* ``errors`` — any node can append a soft failure without clobbering earlier ones.
+* ``budget_matches`` — legacy component-level matches (``operator.add`` concat).
+* ``errors`` — any node appends a soft failure without clobbering earlier ones.
+* ``task_hours`` — the per-task hours FAN-OUT accumulator. This is the one the live
+  session cares about: ``estimate_task_hours`` runs once per approved task in
+  PARALLEL (Send API) and each branch returns a one-element list. A plain
+  ``operator.add`` would append duplicates if a resume re-entered the fan-out, so it
+  uses the KEYED reducer ``merge_task_hours`` (dedupe by ``(module, task)``,
+  last-write-wins) — idempotent across resumes.
+
+The state now carries the whole multi-agent flow, not just the final estimate:
+``complexity`` + ``reformulated_transcript`` (classifier), ``structure`` +
+``approved_modules`` (structure_agent + human gate 1), ``task_hours`` + ``estimate``
+(hours agent), ``analysis_report`` (analysis_agent), ``gate*_decision`` (the human
+resume payloads, kept for audit) and ``proposal`` (proposal_agent, bonus).
 """
 
 from __future__ import annotations
@@ -46,6 +55,23 @@ class BudgetMatch(TypedDict):
     distance: float
 
 
+def merge_task_hours(existing: list[dict] | None, new: list[dict] | None) -> list[dict]:
+    """Reducer for the per-task hours fan-out accumulator.
+
+    Keyed by ``(module, task)``, last-write-wins. Unlike ``operator.add`` this is
+    IDEMPOTENT: if a resume ever re-runs a fan-out branch (or the recovery join
+    rewrites a task's hours), the task is REPLACED, not appended twice. That is the
+    concrete fix for the "reducers duplicate on resume" pitfall the live session
+    reproduces — the accumulator can be re-entered without growing spurious rows.
+    """
+    by_key: dict[tuple[str, str], dict] = {
+        (t.get("module"), t.get("task")): t for t in (existing or [])
+    }
+    for t in new or []:
+        by_key[(t.get("module"), t.get("task"))] = t
+    return list(by_key.values())
+
+
 class EstimationState(TypedDict, total=False):
     """The state threaded through the graph.
 
@@ -55,11 +81,34 @@ class EstimationState(TypedDict, total=False):
 
     transcript: str
     estimation_id: str
+
+    # --- classifier_agent -------------------------------------------------- #
+    complexity: Optional[str]  # "low" | "medium" | "high"
+    reformulated_transcript: Optional[str]  # cleaned brief the rest of the flow reads
+
+    # --- legacy component pipeline (kept for the pre-exercise nodes/tests) -- #
     requirements: list[str]
     components: list[Component]
     # Accumulator: grows as each component is searched (reducer = list concat).
     budget_matches: Annotated[list[BudgetMatch], operator.add]
+
+    # --- structure_agent + human gate 1 ------------------------------------ #
+    structure: Optional[dict]  # AgentStructure.model_dump() — modules → tasks, no hours
+    approved_modules: Optional[list[dict]]  # TaskHoursModuleInput-shaped, after the gate
+    gate1_decision: Optional[dict]  # the human resume payload (audit)
+
+    # --- hours_retrieval_agent (fan-out accumulator + merged estimate) ------ #
+    # Keyed reducer: idempotent across a resume that re-enters the fan-out.
+    task_hours: Annotated[list[dict], merge_task_hours]
     estimate: Optional[dict]
+
+    # --- analysis_agent + human gate 2 ------------------------------------- #
+    analysis_report: Optional[dict]  # ReliabilityReport.model_dump()
+    gate2_decision: Optional[dict]
+
+    # --- proposal_agent (bonus) -------------------------------------------- #
+    proposal: Optional[str]
+
     status: Optional[str]  # "validated" | "needs_review"
     # Accumulator: soft failures appended by any node, never clobbered.
     errors: Annotated[list[str], operator.add]

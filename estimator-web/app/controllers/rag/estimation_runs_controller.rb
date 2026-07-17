@@ -59,11 +59,11 @@ module Rag
       @run = Rag::EstimationRun.find(params[:id])
       guard_rag_errors do
         query = @run.reformulation_view&.query
-        profile = agent_profile
+        # Fixed agent per step (no selection): Neo drafts the structure.
         payload = rag_client(timeout: GENERATE_TIMEOUT_SECONDS).agent_generate_structure(
           query: query ? query.to_payload : {},
-          config: profile&.config_payload || {},
-          persona: profile&.persona
+          config: {},
+          persona: Agents::GraphFlow.character_for("structure")&.persona
         )
         @run.update!(
           generation: payload,
@@ -87,11 +87,11 @@ module Rag
       modules = normalized_structure
       @run.update!(structure: { "modules" => modules })
       guard_rag_errors do
-        profile = agent_profile
+        # Fixed agent per step (no selection): Trinity recovers the doubtful hours.
         result = rag_client(timeout: GENERATE_TIMEOUT_SECONDS).agent_estimate_task_hours(
           modules: structure_for_api(modules),
-          config: profile&.config_payload || {},
-          persona: profile&.persona
+          config: {},
+          persona: Agents::GraphFlow.character_for("recover")&.persona
         )
         @run.update!(
           task_hours: result,
@@ -128,13 +128,6 @@ module Rag
     end
 
     private
-
-    # The agent profile driving the two phases: the one picked in the form, else
-    # the handwritten default. Nil when no profiles exist → the service defaults win.
-    def agent_profile
-      Agents::Profile.find_by(id: params[:profile_id]) ||
-        Agents::Profile.where(agent_type: "handwritten").find(&:is_default?)
-    end
 
     # Default blended rate seeded into the breakdown; the human edits it per task.
     DEFAULT_RATE_EUR_PER_HOUR = 75

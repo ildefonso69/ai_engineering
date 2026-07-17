@@ -9,6 +9,8 @@
   <span class="text-danger font-bold">marcadas en rojo</span>, sin horas, para que las completes tú.
 </p>
 
+<%= render "step_agent", keys: [ "hours", "recover" ], note: "búsqueda determinista + recuperación agéntica" %>
+
 <% if hours.nil? || modules.empty? %>
   <div class="p-4 rounded-md bg-brand/15 border border-brand text-brand-soft">
     Aún no hay horas estimadas. Vuelve a
