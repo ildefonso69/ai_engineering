@@ -53,6 +53,15 @@ Rails.application.routes.draw do
         get  :proposal_pdf      # download the proposal as a PDF (Prawn)
       end
     end
+
+    # Session 14 — the supervisor flow + the human review inbox. The service IA routes
+    # at runtime to four least-privilege agents and pauses ONLY when the estimate is
+    # not trustworthy enough, so #index is a work queue rather than a wizard listing.
+    resources :supervisor_estimation_runs, only: [ :index, :new, :create, :show ] do
+      member do
+        post :resume # the reviewer's decision: approve / adjust / reject
+      end
+    end
   end
 
   # Session 12 — agents console: named, personalizable profiles for the

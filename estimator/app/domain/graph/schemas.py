@@ -146,3 +146,42 @@ class CommercialProposal(BaseModel):
     body_markdown: str = Field(
         description="The full proposal as Markdown, grounded ONLY in the validated estimate."
     )
+
+
+# --------------------------------------------------------------------------- #
+# Session 14 — the supervisor's routing decision                              #
+# --------------------------------------------------------------------------- #
+SupervisorTarget = Literal[
+    "requirements_extractor",
+    "budget_searcher",
+    "estimate_generator",
+    "coherence_validator",
+    "finish",
+]
+
+
+class SupervisorDecision(BaseModel):
+    """Output of the hand-built supervisor: WHO acts next, and WHY.
+
+    Constraining ``next_agent`` to a ``Literal`` is what keeps an LLM-driven router
+    safe enough to ship: the model cannot invent a destination, only choose among the
+    five the graph knows about. (``LLMWrapper.complete_structured`` exposes no
+    ``temperature``, so the schema — plus the legality guard in ``supervisor.py`` —
+    is where determinism comes from.)
+
+    ``reason`` is not decoration. It is written into ``routing_history`` and is the
+    thing that makes a routing decision auditable; a supervisor that cannot say why it
+    routed somewhere is indistinguishable from a hard-coded pipeline wearing a costume.
+    """
+
+    next_agent: SupervisorTarget = Field(
+        description="The specialist that must act next, or 'finish' when the estimate "
+        "has been produced and validated."
+    )
+    reason: str = Field(
+        description="One line: what the state already contains, what is still missing, "
+        "and why THIS agent is the one that can produce it."
+    )
+    confidence: Confidence = Field(
+        default="medium", description="How sure the router is about this hand-over."
+    )

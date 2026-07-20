@@ -1,0 +1,75 @@
+<%# A finished run: the estimate, whether a human touched it, and any guardrail issues. %>
+<section class="rounded-md border border-white/10 p-5 mb-6">
+  <div class="flex items-center justify-between mb-4">
+    <h2 class="text-sm font-bold tracking-tight text-white/70 uppercase">Estimación</h2>
+    <% if run.confidence_pct %>
+      <span class="text-xs text-white/50">
+        Confianza <span class="font-bold text-white/80"><%= run.confidence_pct %>%</span>
+      </span>
+    <% end %>
+  </div>
+
+  <% if run.estimate_components.blank? %>
+    <p class="text-white/40 text-sm">El flujo no llegó a producir una estimación.</p>
+  <% else %>
+    <table class="w-full text-sm">
+      <thead class="text-white/50 text-xs">
+        <tr>
+          <th class="text-left py-2 font-bold">Componente</th>
+          <th class="text-left py-2 font-bold">Justificación</th>
+          <th class="text-right py-2 font-bold">Días</th>
+        </tr>
+      </thead>
+      <tbody class="divide-y divide-white/5">
+        <% run.estimate_components.each do |component| %>
+          <tr>
+            <td class="py-2 text-white/90"><%= component["name"] %></td>
+            <td class="py-2 text-white/50 text-xs">
+              <%= truncate(component["rationale"].to_s, length: 80) %>
+            </td>
+            <td class="py-2 text-right text-white/90">
+              <% if component["engineer_days"] %>
+                <%= component["engineer_days"] %>d
+              <% else %>
+                <span class="text-danger text-xs font-bold">sin presupuestar</span>
+              <% end %>
+            </td>
+          </tr>
+        <% end %>
+      </tbody>
+      <tfoot>
+        <tr class="border-t border-white/15">
+          <td class="py-2 font-bold text-white/80" colspan="2">Total</td>
+          <td class="py-2 text-right font-bold text-white text-lg"><%= run.total_engineer_days %>d</td>
+        </tr>
+      </tfoot>
+    </table>
+  <% end %>
+</section>
+
+<% if run.human_decision.present? %>
+  <section class="rounded-md border border-white/10 p-5 mb-6">
+    <h2 class="text-sm font-bold tracking-tight text-white/70 uppercase mb-3">Decisión humana</h2>
+    <p class="text-sm text-white/80">
+      <span class="font-bold"><%= run.human_decision["decision"] %></span>
+      <% if run.human_decision["note"].present? %>
+        <span class="text-white/50">· <%= run.human_decision["note"] %></span>
+      <% end %>
+    </p>
+  </section>
+<% end %>
+
+<% if run.errors_list.present? %>
+  <section class="rounded-md border border-warning/30 p-5 mb-6">
+    <h2 class="text-sm font-bold tracking-tight text-warning uppercase mb-3">
+      Avisos de los guardarraíles
+    </h2>
+    <ul class="space-y-1.5">
+      <% run.errors_list.each do |issue| %>
+        <li class="text-sm text-white/70 flex gap-2">
+          <span class="text-warning">·</span><span><%= issue %></span>
+        </li>
+      <% end %>
+    </ul>
+  </section>
+<% end %>

@@ -10,7 +10,7 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[8.0].define(version: 2026_07_16_130000) do
+ActiveRecord::Schema[8.0].define(version: 2026_07_20_120000) do
   # These are extensions that must be enabled in order to support this database
   enable_extension "pg_catalog.plpgsql"
 
@@ -92,6 +92,7 @@ ActiveRecord::Schema[8.0].define(version: 2026_07_16_130000) do
     t.datetime "updated_at", null: false
     t.jsonb "structure", default: {}, null: false
     t.jsonb "task_hours", default: {}, null: false
+    t.jsonb "agent_run", default: {}, null: false
     t.index ["created_at"], name: "index_estimation_runs_on_created_at"
   end
 
@@ -140,6 +141,30 @@ ActiveRecord::Schema[8.0].define(version: 2026_07_16_130000) do
     t.datetime "created_at", null: false
     t.datetime "updated_at", null: false
     t.index ["job_id"], name: "index_index_runs_on_job_id"
+  end
+
+  create_table "supervisor_estimation_runs", force: :cascade do |t|
+    t.text "transcript", null: false
+    t.string "estimation_id", null: false
+    t.string "run_state", default: "paused", null: false
+    t.string "status"
+    t.jsonb "pending_review", default: {}, null: false
+    t.jsonb "requirements", default: [], null: false
+    t.jsonb "components", default: [], null: false
+    t.jsonb "budget_matches", default: [], null: false
+    t.jsonb "estimate", default: {}, null: false
+    t.jsonb "validation", default: {}, null: false
+    t.float "confidence"
+    t.jsonb "routing_history", default: [], null: false
+    t.jsonb "agent_contributions", default: [], null: false
+    t.jsonb "privilege_violations", default: [], null: false
+    t.jsonb "human_decision", default: {}, null: false
+    t.jsonb "errors_list", default: [], null: false
+    t.datetime "created_at", null: false
+    t.datetime "updated_at", null: false
+    t.index ["created_at"], name: "index_supervisor_estimation_runs_on_created_at"
+    t.index ["estimation_id"], name: "index_supervisor_estimation_runs_on_estimation_id", unique: true
+    t.index ["run_state", "status"], name: "index_supervisor_estimation_runs_on_run_state_and_status"
   end
 
   add_foreign_key "active_storage_attachments", "active_storage_blobs", column: "blob_id"

@@ -131,5 +131,37 @@ module EstimatorAi
     def graph_proposal(estimation_id:)
       handle_response(json_conn.post("/v1/estimate/graph/#{estimation_id}/proposal"))
     end
+
+    # --- Session 14: the SUPERVISOR flow -------------------------------------
+    # A second, independent multi-agent flow in the service IA: a hand-built supervisor
+    # routes at RUNTIME to four least-privilege agents. It coexists with the graph verbs
+    # above (different endpoints, its own thread namespace on the same checkpointer).
+    #
+    # The contract is the one it has always been — transcript in, estimate + status out.
+    # The one new thing the client must understand is that a run can PAUSE: when the
+    # estimate is not trustworthy enough (low confidence, out of historical range, or no
+    # precedent in the budgets) the response comes back status "awaiting_human_review"
+    # with a `pending_review` describing why, and #supervisor_resume answers it.
+    #
+    # Blocking (no *_stream variant): this flow is short, and the didactic value is in
+    # the pause, not in a live feed.
+
+    # START — runs until the estimate is validated, or until the review gate trips.
+    def supervisor_start(transcript:, estimation_id: nil)
+      body = { transcript: transcript, estimation_id: estimation_id }.compact
+      handle_response(json_conn.post("/v1/estimate/supervisor", body))
+    end
+
+    # RESUME — feed the reviewer's decision: "approve" | "adjust" | "reject".
+    # `estimate_overrides` only matters for "adjust". 409 if nothing is pending.
+    def supervisor_resume(estimation_id:, decision:, estimate_overrides: nil, note: nil)
+      body = { decision: decision, estimate_overrides: estimate_overrides, note: note }.compact
+      handle_response(json_conn.post("/v1/estimate/supervisor/#{estimation_id}/resume", body))
+    end
+
+    # STATE — read the current snapshot (pending review + artifacts + routing trace).
+    def supervisor_state(estimation_id:)
+      handle_response(json_conn.get("/v1/estimate/supervisor/#{estimation_id}/state"))
+    end
   end
 end
