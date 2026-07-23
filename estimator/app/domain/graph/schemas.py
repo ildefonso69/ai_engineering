@@ -185,3 +185,62 @@ class SupervisorDecision(BaseModel):
     confidence: Confidence = Field(
         default="medium", description="How sure the router is about this hand-over."
     )
+
+
+# --------------------------------------------------------------------------- #
+# Session 14 (LIVE) — the competition pattern                                 #
+# --------------------------------------------------------------------------- #
+Stance = Literal["conservative", "aggressive"]
+
+
+class EstimateProposal(BaseModel):
+    """One competing estimate produced from a single stance.
+
+    Two estimators produce these INDEPENDENTLY from substantively different priors —
+    not "the same estimate but more/less cautious". The divergence between the two
+    totals is the signal we care about: a wide spread means the project carries
+    structural uncertainty the model cannot resolve on its own, and that is exactly the
+    moment a human should look. The number alone is cheap; the disagreement is the
+    information.
+    """
+
+    stance: Stance = Field(description="Which estimator produced this proposal.")
+    total_engineer_days: int = Field(
+        ge=0, description="This stance's headline effort in engineer-days."
+    )
+    assumptions: list[str] = Field(
+        default_factory=list,
+        description="The load-bearing assumptions this number rests on.",
+    )
+    risks: list[str] = Field(
+        default_factory=list,
+        description="What could make the real effort diverge from this number.",
+    )
+    reasoning: str = Field(description="One paragraph: how the number was reached.")
+
+
+class SynthesizedEstimate(BaseModel):
+    """The synthesizer's output: a RANGE, never an average.
+
+    Given the two competing proposals and their arithmetic divergence, the synthesizer
+    produces a bracket plus the assumptions that drive it and the questions that, once
+    answered, would collapse the range. Averaging two numbers throws away the very
+    information the competition surfaced — so the prompt forbids it explicitly.
+    """
+
+    low: int = Field(ge=0, description="Lower bound of the estimate range (engineer-days).")
+    high: int = Field(ge=0, description="Upper bound of the estimate range (engineer-days).")
+    driving_assumptions: list[str] = Field(
+        default_factory=list,
+        description="The assumptions that most move the number between low and high.",
+    )
+    open_questions: list[str] = Field(
+        default_factory=list,
+        description="Questions whose answers would narrow the range.",
+    )
+    confidence: Confidence = Field(
+        default="medium", description="Confidence in the range as a whole."
+    )
+    reasoning: str = Field(
+        description="Short prose on how the bracket was set — explicitly NOT an average."
+    )

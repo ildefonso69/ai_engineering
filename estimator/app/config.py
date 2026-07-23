@@ -297,6 +297,23 @@ class Settings(BaseSettings):
     # logged in full, so a call's identity is provable without dumping a transcript.
     SUPERVISOR_AUDIT_ARGS_PREVIEW_CHARS: int = 200
 
+    # --- Session 14 (LIVE) -------------------------------------------------- #
+    # Competition pattern: when true, the estimate step runs a conservative-vs-aggressive
+    # competition + a synthesizer instead of a single consolidation. Off by default so
+    # the reference graph, its router and its tests are byte-for-byte unchanged; the live
+    # demo flips it on (build flag / --compete).
+    SUPERVISOR_COMPETITION_ENABLED: bool = False
+    # How hard the divergence between the two estimators pulls the deterministic
+    # confidence down. A wide spread is structural uncertainty the grounding cannot see,
+    # so it must be able to trip the HITL gate on its own. Scaled 0..1 by the divergence
+    # ratio: penalty = SUPERVISOR_DIVERGENCE_PENALTY * ratio.
+    SUPERVISOR_DIVERGENCE_PENALTY: float = 0.4
+    # Sandboxing: when true, an irreversible write (save_estimate) is queued after
+    # validation, which forces the human gate to pause (the pause authorizes the write)
+    # and appends a persistence_agent that executes the write under guard_action. Off by
+    # default so the reference flow ends at the gate.
+    SUPERVISOR_PERSISTENCE_ENABLED: bool = False
+
     @model_validator(mode="after")
     def validate_at_least_one_api_key(self) -> "Settings":
         """LiteLLM may try either provider via fallback, so we require at least one key."""

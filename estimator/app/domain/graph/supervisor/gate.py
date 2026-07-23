@@ -66,6 +66,13 @@ def review_reasons(state: SupervisorState, settings: Settings | None = None) -> 
             f"only {grounded}/{total} components have any precedent in the historical budgets"
         )
 
+    # Trigger 4 (S14 live sandboxing): an irreversible write is queued. Routing it here is
+    # deliberate — the same pause that reviews the estimate authorises the no-undo save.
+    if state.get("persist_requested"):
+        reasons.append(
+            "an irreversible save_estimate is queued; the human pause authorises the write"
+        )
+
     return reasons
 
 

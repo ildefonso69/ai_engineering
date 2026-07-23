@@ -14,8 +14,10 @@ import pytest
 from app.domain.graph.schemas import (
     ComponentClassification,
     ConsolidatedEstimate,
+    EstimateProposal,
     RequirementsExtraction,
     SupervisorDecision,
+    SynthesizedEstimate,
 )
 
 TRANSCRIPT = "A" * 200
@@ -51,12 +53,18 @@ class FakeWrapper:
         components: list[tuple[str, str]] | None = None,
         estimate: dict | None = None,
         route_error: Exception | None = None,
+        conservative_total: int = 120,
+        aggressive_total: int = 100,
     ) -> None:
         self.route_script = list(route_script or [])
         self.requirements = requirements or ["req one", "req two"]
         self.components = components or [("API", "backend"), ("App", "mobile")]
         self.estimate = estimate
         self.route_error = route_error
+        # Session 14 (live) competition: the two totals the estimators return. Making
+        # them far apart is how a test forces high divergence → low confidence → pause.
+        self.conservative_total = conservative_total
+        self.aggressive_total = aggressive_total
         self.calls: list[str] = []
 
     def complete_structured(self, *, response_model, **kwargs):
@@ -95,6 +103,37 @@ class FakeWrapper:
                 "reasoning": "consolidated from the anchors",
             }
             return ConsolidatedEstimate(**payload), {}
+
+        if response_model is EstimateProposal:
+            # Dispatch on the stance-specific system prompt the competition nodes send.
+            system_prompt = kwargs.get("system_prompt", "")
+            is_conservative = "RISK-FIRST" in system_prompt
+            total = self.conservative_total if is_conservative else self.aggressive_total
+            stance = "conservative" if is_conservative else "aggressive"
+            return (
+                EstimateProposal(
+                    stance=stance,
+                    total_engineer_days=total,
+                    assumptions=[f"{stance} assumption"],
+                    risks=[f"{stance} risk"],
+                    reasoning=f"{stance} reasoning",
+                ),
+                {},
+            )
+
+        if response_model is SynthesizedEstimate:
+            low, high = sorted((self.conservative_total, self.aggressive_total))
+            return (
+                SynthesizedEstimate(
+                    low=low,
+                    high=high,
+                    driving_assumptions=["scope closure", "integration friction"],
+                    open_questions=["Is the legacy interface documented?"],
+                    confidence="low" if (high - low) > 0.3 * high else "medium",
+                    reasoning="bracketed the two proposals; did not average",
+                ),
+                {},
+            )
 
         raise AssertionError(f"unexpected response_model: {response_model!r}")
 

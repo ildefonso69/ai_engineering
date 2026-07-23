@@ -36,10 +36,13 @@ from langgraph.graph import END, START, StateGraph
 from app.domain.graph.supervisor.agents import (
     budget_searcher,
     coherence_validator,
+    competitive_estimate_generator,
     estimate_generator,
+    persistence_agent,
     requirements_extractor,
 )
 from app.domain.graph.supervisor.gate import human_review_gate
+from app.domain.graph.supervisor.sandbox import verify_tool_grants
 from app.domain.graph.supervisor.state import SupervisorState
 from app.domain.graph.supervisor.supervisor import supervisor
 
@@ -53,13 +56,33 @@ AGENT_NODES = {
 }
 
 
-def build_supervisor_graph(checkpointer=None):
+def build_supervisor_graph(
+    checkpointer=None, *, competitive: bool = False, sandboxed: bool = False
+):
     """Build and compile the supervisor graph.
 
     ``checkpointer`` persists state per ``thread_id`` (an ``AsyncPostgresSaver`` in the
     app, a ``MemorySaver`` in tests). It is REQUIRED for the human gate to resume: a
     ``None`` checkpointer compiles fine but cannot pause and come back.
+
+    Two S14-live variants, both OFF by default so the reference graph is unchanged:
+
+    * ``competitive`` swaps the ``estimate_generator`` node body for the two-estimator
+      competition (same node NAME, so the router, ``_ORDER`` and the privilege table are
+      untouched).
+    * ``sandboxed`` appends a ``persistence_agent`` after the gate — the one WRITE in the
+      system — so ``human_review_gate → persistence_agent → END``. The write is guarded
+      and the queued irreversible action is what forces the gate to pause.
     """
+    # Fail the startup, not a runtime call, if the grant table is inconsistent.
+    verify_tool_grants()
+
+    # A LOCAL copy: never mutate the module-level table (the demo runner's violation probe
+    # and the reference tests capture it by identity).
+    agent_nodes = dict(AGENT_NODES)
+    if competitive:
+        agent_nodes["estimate_generator"] = competitive_estimate_generator
+
     builder = StateGraph(SupervisorState)
 
     builder.add_node(
@@ -72,15 +95,22 @@ def build_supervisor_graph(checkpointer=None):
         # ``get_graph().draw_mermaid()`` honest.
         destinations=(*AGENT_NODES, "human_review_gate"),
     )
-    for name, fn in AGENT_NODES.items():
+    for name, fn in agent_nodes.items():
         builder.add_node(name, fn)
     builder.add_node("human_review_gate", human_review_gate)
 
     builder.add_edge(START, "supervisor")
-    for name in AGENT_NODES:
+    for name in agent_nodes:
         # Every specialist hands control BACK to the router. These return edges are
         # what make the graph cyclic — and what make the step budget mandatory.
         builder.add_edge(name, "supervisor")
-    builder.add_edge("human_review_gate", END)
+
+    if sandboxed:
+        # The write is a terminal leg AFTER the gate: the human pause authorises it.
+        builder.add_node("persistence_agent", persistence_agent)
+        builder.add_edge("human_review_gate", "persistence_agent")
+        builder.add_edge("persistence_agent", END)
+    else:
+        builder.add_edge("human_review_gate", END)
 
     return builder.compile(checkpointer=checkpointer)

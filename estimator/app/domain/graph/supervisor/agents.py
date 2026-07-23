@@ -52,11 +52,13 @@ from app.domain.graph.schemas import (
     RequirementsExtraction,
 )
 from app.domain.graph.state import BudgetMatch, Component
+from app.domain.graph.supervisor.competition import COMPETITION_GRAPH, compute_divergence
 from app.domain.graph.supervisor.privilege import (
     CALCULATE_TOOL,
     guarded_dispatch,
     record_model_action,
 )
+from app.domain.graph.supervisor.sandbox import ActionRequest, execute_guarded
 from app.domain.graph.supervisor.state import SupervisorState
 from app.generation.rag.agent_retrieval import make_retrieval_backend
 from app.generation.rag.task_hours import distance_weighted_consensus
@@ -347,8 +349,137 @@ async def estimate_generator(state: SupervisorState) -> dict:
 
 
 # --------------------------------------------------------------------------- #
+# competitive_estimate_generator (S14 LIVE) — same node, run as a competition #
+# --------------------------------------------------------------------------- #
+def _competition_brief(state: SupervisorState, estimate: dict) -> str:
+    """The shared evidence both estimators read: components, references, base total."""
+    components = state.get("components") or []
+    matches = state.get("budget_matches") or []
+    lines = ["Project components and their historical reference budgets (engineer-hours):"]
+    for component in components:
+        refs = _references_for(component["name"], matches)
+        ref_text = ", ".join(f"{h:.0f}h" for h in refs) if refs else "no historical references"
+        lines.append(f"- {component['name']} [{component['category']}]: {ref_text}")
+    lines.append(
+        f"\nGrounded consolidation total (engineer-days): {estimate.get('total_engineer_days')}"
+    )
+    return "\n".join(lines)
+
+
+async def competitive_estimate_generator(state: SupervisorState) -> dict:
+    """The estimate step, run as a COMPETITION instead of a single consolidation.
+
+    Same node NAME as ``estimate_generator`` so the router, the dependency ladder and the
+    privilege table are all untouched — only the body changes. Two steps:
+
+    1. Produce the grounded per-component estimate exactly as ``estimate_generator`` does,
+       so ``coherence_validator`` reads the same shape it always has.
+    2. Run the two-estimator competition subgraph over the same evidence to get a RANGE
+       and the arithmetic ``divergence``. The range is attached to the estimate; the
+       divergence is written as a state FACT the validator folds into confidence, so a
+       wide spread can trip the human gate on its own.
+    """
+    base = await estimate_generator(state)
+    with logfire.span("agent: competitive_estimate_generator"):
+        step = _step_of(state)
+        estimation_id = state.get("estimation_id")
+        brief = _competition_brief(state, base["estimate"])
+        sub = await COMPETITION_GRAPH.ainvoke({"brief": brief})
+        proposals = sub.get("proposals") or []
+        divergence = sub.get("divergence") or compute_divergence(proposals)
+        synthesis = sub.get("synthesis") or {}
+
+        estimate = dict(base["estimate"])
+        if synthesis:
+            estimate["range"] = {"low": synthesis.get("low"), "high": synthesis.get("high")}
+            estimate["open_questions"] = synthesis.get("open_questions") or []
+
+        contributions = list(base.get("agent_contributions") or [])
+        for proposal in proposals:
+            contributions.append(
+                record_model_action(
+                    "estimate_generator",
+                    f"competition_{proposal.get('stance')}",
+                    step=step,
+                    estimation_id=estimation_id,
+                    summary=f"{proposal.get('stance')} total = "
+                    f"{proposal.get('total_engineer_days')}d",
+                )
+            )
+        contributions.append(
+            record_model_action(
+                "estimate_generator",
+                "competition_synthesis",
+                step=step,
+                estimation_id=estimation_id,
+                summary=f"range {synthesis.get('low')}..{synthesis.get('high')}d, "
+                f"divergence {divergence.get('ratio')} ({divergence.get('level')})",
+            )
+        )
+
+        log.info(
+            "supervisor_agent_competitive_estimate_generator",
+            divergence=divergence.get("ratio"),
+            level=divergence.get("level"),
+        )
+        return {
+            **base,
+            "estimate": estimate,
+            "proposals": proposals,
+            "divergence": divergence,
+            "synthesis": synthesis,
+            "agent_contributions": contributions,
+        }
+
+
+# --------------------------------------------------------------------------- #
+# persistence_agent (S14 LIVE) — the one WRITE, fully sandboxed                #
+# --------------------------------------------------------------------------- #
+async def persistence_agent(state: SupervisorState) -> dict:
+    """Persist the validated estimate — the ONLY write in the system.
+
+    Isolating the write in its own agent is layer one of the sandbox: the four read
+    agents cannot save even by accident, because the capability is not in their grant.
+    The write goes through ``execute_guarded`` (privilege + argument + tenancy checks,
+    then audit). An irreversible action with no human approval is DEFERRED, not executed
+    — which is why the flow forces the gate to pause first: the human pause IS the
+    authorisation for the irreversible write. A rejected estimate is therefore never
+    persisted.
+    """
+    with logfire.span("agent: persistence_agent"):
+        step = _step_of(state)
+        estimation_id = state.get("estimation_id")
+        request = ActionRequest(
+            agent="persistence_agent",
+            tool="save_estimate",
+            args={"estimation_id": estimation_id, "estimate": state.get("estimate") or {}},
+            estimation_id=estimation_id,
+            step=step,
+        )
+        result, contribution = await execute_guarded(request, state)
+        log.info("supervisor_agent_persistence", outcome=contribution.get("outcome"))
+        return {"saved": result, "agent_contributions": [contribution]}
+
+
+# --------------------------------------------------------------------------- #
 # coherence_validator — validate_estimate only                                #
 # --------------------------------------------------------------------------- #
+def _apply_divergence_penalty(confidence: float, divergence: dict | None) -> float:
+    """Fold estimator disagreement into the confidence the gate reads.
+
+    A wide spread between the two competing estimators is uncertainty that grounding
+    cannot see, so it must be able to trip the human gate on its own. The penalty is
+    ``SUPERVISOR_DIVERGENCE_PENALTY * ratio`` where ``ratio`` is arithmetic
+    (``competition.compute_divergence``). No divergence (competition off) → no change, so
+    the reference path is byte-for-byte unaffected.
+    """
+    ratio = float((divergence or {}).get("ratio") or 0.0)
+    if ratio <= 0.0:
+        return confidence
+    penalty = get_settings().SUPERVISOR_DIVERGENCE_PENALTY * min(ratio, 1.0)
+    return max(0.0, min(1.0, confidence - penalty))
+
+
 def _confidence_score(estimate: dict, issues: list[str], grounded: int, total: int) -> float:
     """Map the model's label × grounding × guardrail issues onto a 0..1 signal.
 
@@ -401,6 +532,10 @@ async def coherence_validator(state: SupervisorState) -> dict:
         grounded = sum(1 for c in components if _references_for(c.get("name", "?"), matches))
         total = len(components)
         confidence = _confidence_score(estimate, issues, grounded, total)
+        # Competition (S14 live): a wide spread between the two estimators is structural
+        # uncertainty grounding cannot see. Fold it into the SAME confidence the gate
+        # reads, so divergence alone can trip the pause. Absent when competition is off.
+        confidence = _apply_divergence_penalty(confidence, state.get("divergence"))
 
         log.info(
             "supervisor_agent_coherence_validator",
@@ -419,4 +554,9 @@ async def coherence_validator(state: SupervisorState) -> dict:
         }
         if issues:
             update["errors"] = issues
+        # Sandboxing (S14 live): when an irreversible save is enabled, declare it here so
+        # the gate pauses to authorise it (see gate.review_reasons + persistence_agent).
+        # The human pause on this estimate doubles as approval of the no-undo write.
+        if get_settings().SUPERVISOR_PERSISTENCE_ENABLED:
+            update["persist_requested"] = True
         return update

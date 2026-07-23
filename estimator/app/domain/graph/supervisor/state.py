@@ -166,6 +166,21 @@ class SupervisorState(EstimationState, total=False):
     review_reasons: list[str]
     human_decision: Optional[dict]
 
+    # --- Session 14 (LIVE): competition ------------------------------------- #
+    # The two competing proposals, their arithmetic divergence and the synthesized
+    # range. All written once by the competitive estimate node (plain last-write-wins);
+    # ``divergence`` is a FACT the coherence validator folds into the confidence signal.
+    proposals: Optional[list[dict]]
+    divergence: Optional[dict]
+    synthesis: Optional[dict]
+
+    # --- Session 14 (LIVE): sandboxing / persistence ------------------------ #
+    # ``persist_requested`` is set by the validator when persistence is enabled; it is a
+    # gate trigger (an irreversible write must be authorised by a person). ``saved`` is
+    # the guarded write's outcome envelope.
+    persist_requested: Optional[bool]
+    saved: Optional[dict]
+
 
 def privilege_violations(state: dict[str, Any]) -> list[dict]:
     """Every denied action in the trail.

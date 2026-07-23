@@ -137,10 +137,36 @@ def _render_privilege() -> list[str]:
     return lines
 
 
+def _render_competition(state: dict) -> list[str]:
+    """S14 live: the two competing proposals, their divergence and the synthesized range."""
+    proposals = state.get("proposals")
+    if not proposals:
+        return []
+    lines = ["", "COMPETITION (conservative vs aggressive)", "-" * 78]
+    for proposal in proposals:
+        lines.append(
+            f"  {proposal.get('stance', '?'):<14} {str(proposal.get('total_engineer_days')) + 'd':>8}  "
+            f"risks: {', '.join(proposal.get('risks') or []) or '—'}"
+        )
+    divergence = state.get("divergence") or {}
+    synthesis = state.get("synthesis") or {}
+    lines.append(
+        f"  divergence   : ratio {divergence.get('ratio')} ({divergence.get('level')}), "
+        f"spread {divergence.get('spread')}d"
+    )
+    lines.append(
+        f"  synthesized  : {synthesis.get('low')}..{synthesis.get('high')}d "
+        f"(confidence {synthesis.get('confidence')})"
+    )
+    for question in synthesis.get("open_questions") or []:
+        lines.append(f"    open question: {question}")
+    return lines
+
+
 def _render_audit(state: dict) -> list[str]:
     lines = ["", "AUDIT TRAIL (agent_contributions)", "-" * 78]
     for row in state.get("agent_contributions") or []:
-        marker = {"ok": "ok", "denied": "DENIED", "error": "ERROR"}.get(
+        marker = {"ok": "ok", "denied": "DENIED", "error": "ERROR", "deferred": "DEFER"}.get(
             row.get("outcome", "?"), "?"
         )
         digest = row.get("args_digest") or "-"
@@ -178,9 +204,17 @@ def _render_estimate(state: dict) -> list[str]:
         rendered = f"{days}d" if days is not None else "— (unbudgeted)"
         lines.append(f"  {component.get('name', '?'):<40} {rendered:>16}")
     lines.append(f"  {'TOTAL':<40} {str(estimate.get('total_engineer_days')) + 'd':>16}")
+    estimate_range = estimate.get("range")
+    if estimate_range:
+        rendered_range = f"{estimate_range.get('low')}..{estimate_range.get('high')}d"
+        lines.append(f"  {'RANGE (competition)':<40} {rendered_range:>16}")
     lines.append(
         f"  status = {state.get('status')} · model confidence = {estimate.get('confidence')}"
     )
+    saved = state.get("saved")
+    if saved is not None:
+        outcome = "persisted" if saved.get("ok") else f"NOT persisted ({saved.get('error')})"
+        lines.append(f"  persistence = {outcome}")
     errors = state.get("errors") or []
     if errors:
         lines.append("")
@@ -200,6 +234,7 @@ def _render(state: dict, decision: str | None) -> str:
             "",
             *_render_routing(state),
             *_render_privilege(),
+            *_render_competition(state),
             *_render_audit(state),
             *_render_review(state, decision),
             *_render_estimate(state),
@@ -268,18 +303,20 @@ async def _main_async(args: argparse.Namespace) -> int:
     print(f"router model   : {settings.SUPERVISOR_ROUTER_MODEL}")
     print(f"threshold      : {settings.SUPERVISOR_CONFIDENCE_THRESHOLD}")
     print(f"checkpointer   : {'MemorySaver' if args.memory else 'AsyncPostgresSaver'}")
+    print(f"variant        : competitive={args.compete} · sandboxed={args.persist}")
     print("=" * 78)
 
+    build_kwargs = {"competitive": args.compete, "sandboxed": args.persist}
     if args.memory:
         from langgraph.checkpoint.memory import MemorySaver
 
-        graph = build_supervisor_graph(MemorySaver())
+        graph = build_supervisor_graph(MemorySaver(), **build_kwargs)
         state, decision = await _run_to_completion(graph, transcript, estimation_id, args.decision)
     else:
         from app.domain.graph.checkpointer import open_checkpointer
 
         async with open_checkpointer() as checkpointer:
-            graph = build_supervisor_graph(checkpointer)
+            graph = build_supervisor_graph(checkpointer, **build_kwargs)
             state, decision = await _run_to_completion(
                 graph, transcript, estimation_id, args.decision
             )
@@ -318,8 +355,28 @@ def main() -> int:
         action="store_true",
         help="Make an agent attempt an out-of-privilege tool (Level 3 demo).",
     )
+    parser.add_argument(
+        "--compete",
+        action="store_true",
+        help="Run the estimate step as a conservative-vs-aggressive competition (S14 live).",
+    )
+    parser.add_argument(
+        "--persist",
+        action="store_true",
+        help="Append the sandboxed persistence_agent; the human gate authorises the write.",
+    )
     parser.add_argument("--out", default=None, help="Write the rendered run to this file.")
     args = parser.parse_args()
+
+    # --persist drives a graph shape (the build flag) AND a state fact: the validator only
+    # queues the write when the setting is on. Set it before the cached settings are read
+    # anywhere downstream, so both agree.
+    if args.persist:
+        import os
+
+        os.environ["SUPERVISOR_PERSISTENCE_ENABLED"] = "true"
+        get_settings.cache_clear()
+
     _ = settings  # touched so a missing .env fails here rather than mid-run
     return asyncio.run(_main_async(args))
 

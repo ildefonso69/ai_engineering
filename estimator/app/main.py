@@ -100,12 +100,23 @@ async def lifespan(app: FastAPI):
             log.error("graph_init_failed", error=str(exc)[:400])
 
         # Session 14: the SUPERVISOR graph — a hand-built router over four
-        # least-privilege agents, with a confidence-triggered human gate.
+        # least-privilege agents, with a confidence-triggered human gate. The S14-live
+        # competition + sandboxing variants are toggled by settings (off by default);
+        # ``build_supervisor_graph`` also runs ``verify_tool_grants`` and would fail the
+        # startup of THIS graph — and only this graph — on an inconsistent grant table.
         try:
             from app.domain.graph.supervisor.build import build_supervisor_graph
 
-            app.state.supervisor_graph = build_supervisor_graph(checkpointer)
-            log.info("supervisor_graph_ready")
+            app.state.supervisor_graph = build_supervisor_graph(
+                checkpointer,
+                competitive=settings.SUPERVISOR_COMPETITION_ENABLED,
+                sandboxed=settings.SUPERVISOR_PERSISTENCE_ENABLED,
+            )
+            log.info(
+                "supervisor_graph_ready",
+                competitive=settings.SUPERVISOR_COMPETITION_ENABLED,
+                sandboxed=settings.SUPERVISOR_PERSISTENCE_ENABLED,
+            )
         except Exception as exc:  # noqa: BLE001
             log.error("supervisor_graph_init_failed", error=str(exc)[:400])
 
