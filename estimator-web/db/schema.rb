@@ -92,7 +92,6 @@ ActiveRecord::Schema[8.0].define(version: 2026_07_20_120000) do
     t.datetime "updated_at", null: false
     t.jsonb "structure", default: {}, null: false
     t.jsonb "task_hours", default: {}, null: false
-    t.jsonb "agent_run", default: {}, null: false
     t.index ["created_at"], name: "index_estimation_runs_on_created_at"
   end
 

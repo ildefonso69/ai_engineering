@@ -45,6 +45,33 @@
       </tfoot>
     </table>
   <% end %>
+
+  <%# Session 14 (live) — competition: the synthesized RANGE, never an average. The
+      spread IS the signal — a wide bracket says the project carries structural
+      uncertainty. This whole block is read-only and the pattern is stack-agnostic: any
+      HTTP client reading the same estimate JSONB can render it. %>
+  <% if run.estimate_range.present? %>
+    <div class="mt-4 pt-4 border-t border-white/10">
+      <div class="flex items-center justify-between">
+        <span class="text-xs font-bold tracking-tight text-white/60 uppercase">
+          Rango (competición conservador ↔ agresivo)
+        </span>
+        <span class="text-white font-bold">
+          <%= run.estimate_range["low"] %>–<%= run.estimate_range["high"] %>d
+        </span>
+      </div>
+      <% if run.open_questions.any? %>
+        <p class="text-white/50 text-xs mt-2 mb-1">Preguntas abiertas que estrecharían el rango:</p>
+        <ul class="space-y-1">
+          <% run.open_questions.each do |question| %>
+            <li class="text-sm text-white/70 flex gap-2">
+              <span class="text-white/30">·</span><span><%= question %></span>
+            </li>
+          <% end %>
+        </ul>
+      <% end %>
+    </div>
+  <% end %>
 </section>
 
 <% if run.human_decision.present? %>

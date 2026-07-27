@@ -43,6 +43,13 @@ module Rag
 
     def total_engineer_days = estimate["total_engineer_days"].to_i
 
+    # Session 14 (live) — competition: the synthesized range and the open questions ride
+    # INSIDE the estimate JSONB, so they surface with no change to the HTTP contract. A
+    # wide low..high bracket is the divergence between the two estimators made visible.
+    def estimate_range = estimate.is_a?(Hash) ? estimate["range"] : nil
+
+    def open_questions = Array(estimate.is_a?(Hash) ? estimate["open_questions"] : nil)
+
     # Confidence as a percentage, for the badge. nil-safe: a run that never reached the
     # validator has no confidence rather than a confidence of zero.
     def confidence_pct = confidence && (confidence * 100).round
