@@ -2,8 +2,12 @@
 # never committed.
 guides/
 
+# Real environment values for the root docker-compose (API keys, service token).
+# The versioned template is .env.example — never commit the filled-in .env.
+.env
+
 # Local environment / editor cruft (the project also has its own .gitignore
-# inside estimator/, this catches files at the repo root).
+# inside ai-service/, this catches files at the repo root).
 .DS_Store
 .idea/
 .vscode/

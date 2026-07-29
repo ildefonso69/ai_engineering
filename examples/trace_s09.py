@@ -23,8 +23,8 @@ Two steps, exactly as the exercise statement asks:
 Usage (standalone, from the repo root — uv resolves the inline deps, no project venv needed)::
 
     # 1. stack up + corpus ingested first (see arquitectura-actual.md, section 2)
-    #    docker compose up -d estimator estimator-postgres redis
-    #    docker compose run --rm estimator python scripts/query_examples.py
+    #    docker compose up -d ai-service vector-db redis
+    #    docker compose run --rm ai-service python scripts/query_examples.py
     export OPENAI_API_KEY=sk-...
     uv run examples/trace_s09.py examples/transcripts/02_ambiguous.txt
 

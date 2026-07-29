@@ -1,6 +1,6 @@
 # Diagnóstico arquitectónico — Sesión 09 (pre-work)
 
-Estado del servicio IA `estimator` al cierre de Sesión 08, comportamiento observado al pasarle una
+Estado del servicio IA `ai-service` al cierre de Sesión 08, comportamiento observado al pasarle una
 transcripción cruda, fallos concretos y propuesta de evolución hasta cerrar el bucle
 transcripción → estimación.
 
@@ -26,15 +26,15 @@ que vaya desde una transcripción hasta una estimación.**
 
 ```mermaid
 flowchart TB
-    subgraph FE["① Frontend — estimator-web (Rails/Hotwire)"]
+    subgraph FE["① Frontend — business-backend (Rails/Hotwire)"]
         UI["Formulario / vistas"]
     end
 
-    subgraph BIZ["② Backend de negocio — estimator-web (Rails)"]
+    subgraph BIZ["② Backend de negocio — business-backend (Rails)"]
         AIClient["EstimatorAi::BaseClient<br/>(único que habla HTTP con FastAPI)"]
     end
 
-    subgraph AI["③ Servicio IA — estimator (FastAPI)"]
+    subgraph AI["③ Servicio IA — ai-service (FastAPI)"]
         direction TB
 
         subgraph API["app/api (transporte)"]
@@ -102,11 +102,11 @@ comprar". Divaga, mezcla temas y solo un par de frases dan pistas concretas.
 ```bash
 # Desde la raíz del monorepo
 cd /Users/antonioperez/projects/ia/ai-engineering
-docker compose up -d estimator estimator-postgres redis
+docker compose up -d ai-service vector-db redis
 
 # Ingesta idempotente del corpus real (17 presupuestos de data/budgets_sample.json).
 # 409 = ya ingestado, así que re-ejecutar no duplica.
-docker compose run --rm estimator python scripts/query_examples.py
+docker compose run --rm ai-service python scripts/query_examples.py
 ```
 
 **Trace (script cliente, no añade comportamiento al servicio):**
@@ -271,7 +271,7 @@ flowchart TB
         AIClient["EstimatorAi::BaseClient"]
     end
 
-    subgraph AI["③ Servicio IA — estimator (FastAPI)"]
+    subgraph AI["③ Servicio IA — ai-service (FastAPI)"]
         direction TB
 
         Trans["Transcripción cruda"]
