@@ -67,6 +67,33 @@ recolectar los tests.
 
 ---
 
+## Reproducir el entorno de CI en local
+
+**Ejecutar los mismos comandos que CI no es lo mismo que ejecutarlos en el mismo entorno.** Este
+pipeline falló la primera vez por eso: el workflow pasaba `APP_ENV: test`, un valor que
+`app/config.py` no acepta —solo conoce `development`, `staging` y `production`—, así que
+`get_settings()` reventaba **al importar** y pytest salía con código 4 sin llegar a cargar
+`conftest.py`.
+
+En local nunca falló, porque `APP_ENV` venía del `.env` con un valor válido.
+
+Para reproducirlo de verdad hay que partir de un entorno **vacío**:
+
+```bash
+cd ai-service
+env -i PATH="$PATH" HOME="$HOME" \
+  OPENAI_API_KEY=sk-test-not-a-real-key \
+  APP_ENV=development \
+  DATABASE_URL=postgresql+psycopg://estimator:estimator@localhost:5433/estimator \
+  uv run pytest -q
+```
+
+`env -i` es la clave: sin él heredas tu `.env` y las variables de tu shell, que es justo lo que
+enmascara este tipo de fallo. **El bloque `env:` del workflow es parte de lo que hay que probar**,
+no decoración.
+
+---
+
 ## Regla 2 — los secretos nunca entran al repositorio ni a los logs
 
 ```mermaid
