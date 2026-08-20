@@ -291,6 +291,20 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # Declarar EN VOZ ALTA a qué registro se va a escribir, y hacerlo ANTES de
+      # construir nada. Sin esto el fallo de namespace o de credenciales aparece
+      # al final, después de 15 minutos construyendo una imagen de 4,9 GB.
+      #
+      # Imprime BOOLEANOS, nunca valores: que un secreto esté definido o no es
+      # información inocua; su contenido no.
+      - name: Resolve registry namespace
+        env:
+          OWNER: ${{ vars.GHCR_OWNER || github.repository_owner }}
+        run: |
+          echo "GHCR_OWNER variable set : ${{ vars.GHCR_OWNER != '' }}"
+          echo "GHCR_PAT secret set     : ${{ secrets.GHCR_PAT != '' }}"
+          echo "resolved namespace      : ghcr.io/${OWNER,,}"
+
       - uses: docker/setup-buildx-action@v3
 
       # Only needed when we are actually going to push.
