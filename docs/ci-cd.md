@@ -219,11 +219,38 @@ de doce factores que rige el despliegue, aplicado a los tests.**
 
 ---
 
-## CD — preparado y desactivado
+## CD — tras un interruptor, no tras un comentario
 
-El job `deploy` está escrito y cableado, pero apagado con `&& false`. Para
-activarlo: quitar ese `&& false` y crear los secretos
-`EC2_HOST`, `EC2_USER` y `EC2_SSH_KEY`, y definir la variable `APP_DOMAIN`.
+El job `deploy` está escrito y cableado, y su `if:` exige **tres** cosas:
+
+```yaml
+if: github.ref == 'refs/heads/main' && github.event_name == 'push' && vars.CD_ENABLED == 'true'
+```
+
+Es decir: rama `main`, evento `push` (una ejecución manual **no** despliega: un
+despliegue va siempre atado a un commit que aterrizó en main, o no hay a dónde
+volver) y la variable `CD_ENABLED` puesta a `true`. Activarlo es un cambio de
+configuración del repositorio, no un cambio de código que vuelva a pasar por
+revisión.
+
+Lo que hay que crear antes:
+
+| Tipo | Nombre | Valor |
+|---|---|---|
+| Secret | `EC2_HOST` | La IP o el hostname de la instancia |
+| Secret | `EC2_USER` | `ubuntu` |
+| Secret | `EC2_SSH_KEY` | El contenido **completo** del `.pem`, cabeceras incluidas |
+| Variable | `APP_DOMAIN` | El dominio público (lo usa el smoke test) |
+| Variable | `CD_ENABLED` | `true` |
+
+`EC2_SSH_KEY` es la clave **privada**: con ella se entra al servidor. Va como
+*secret*, nunca como *variable* — las variables se imprimen en los logs.
+
+**Los ficheros de despliegue viajan por `scp` desde el runner** (`docker-compose*.yml`,
+`deploy/`, `scripts/`), no con un `git pull` en el servidor: `/opt/estimator` no
+es un clon, y convertirlo en uno significaría dejar credenciales de git en la
+máquina. El código de la aplicación no viaja por ahí — ya va dentro de las
+imágenes que publicó el job anterior.
 
 Orden importante: **primero el servicio IA, después el backend de negocio**. El
 segundo depende del primero.

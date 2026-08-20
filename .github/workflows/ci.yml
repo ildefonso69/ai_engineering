@@ -380,21 +380,38 @@ jobs:
   deploy:
     name: Deploy to EC2
     needs: build
-    # Gated on a repository VARIABLE, not on editing this file: para activarlo,
-    # define vars.CD_ENABLED = true en Settings > Variables. Requisitos previos:
-    #   1. secretos EC2_HOST / EC2_USER / EC2_SSH_KEY
-    #   2. variable APP_DOMAIN
-    #   3. /opt/estimator TIENE que ser un clon de git (el script hace git fetch);
-    #      hoy sus ficheros llegaron por scp, así que este job fallaría.
+    # Gated on a repository VARIABLE, not on editing this file: to enable it,
+    # set vars.CD_ENABLED = true under Settings > Secrets and variables >
+    # Actions > Variables. Prerequisites:
+    #   1. secrets   EC2_HOST · EC2_USER · EC2_SSH_KEY
+    #   2. variables APP_DOMAIN · CD_ENABLED
+    #
+    # Note the `push` condition: a manual run (workflow_dispatch) deliberately
+    # does NOT deploy. A deployment is always tied to a commit that landed on
+    # main — otherwise there is nothing to roll back to.
     if: github.ref == 'refs/heads/main' && github.event_name == 'push' && vars.CD_ENABLED == 'true'
     runs-on: ubuntu-latest
     environment: production
 
     steps:
-      # Without this the smoke test below cannot run: scripts/smoke_test.py is
-      # not on the runner's disk. (This step was missing while the deploy job
-      # was disabled, so the bug never surfaced.)
+      # The runner needs the repository twice over: to ship the deployment
+      # files in the next step, and to run the smoke test in the last one.
       - uses: actions/checkout@v4
+
+      # The deployment files travel FROM THE RUNNER. /opt/estimator is not a
+      # git clone and turning it into one would mean leaving git credentials on
+      # the instance — exactly the kind of long-lived secret this session
+      # argues against. The application code does not travel here: it is
+      # already baked into the images the previous job published.
+      - name: Ship the deployment files
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ secrets.EC2_HOST }}
+          username: ${{ secrets.EC2_USER }}
+          key: ${{ secrets.EC2_SSH_KEY }}
+          source: "docker-compose.yml,docker-compose.prod.yml,deploy/,scripts/"
+          target: /opt/estimator
+          overwrite: true
 
       - name: Deploy over SSH
         uses: appleboy/ssh-action@v1
@@ -408,15 +425,16 @@ jobs:
             set -euo pipefail
             cd /opt/estimator
 
-            # Ship the deployment files themselves (compose overrides, Caddyfile,
-            # scripts). The application code travels inside the images.
-            git fetch --quiet origin main
-            git reset --hard --quiet origin/main
+            # scp does not carry the executable bit.
+            chmod +x scripts/*.sh deploy/*.sh 2>/dev/null || true
 
             # IMAGE_TAG pins this exact commit. `latest` would make the deploy
             # non-reproducible and the rollback impossible to express.
-            grep -q '^IMAGE_TAG=' .env && sed -i "s/^IMAGE_TAG=.*/IMAGE_TAG=${{ github.sha }}/" .env \
-                                       || echo "IMAGE_TAG=${{ github.sha }}" >> .env
+            if grep -q '^IMAGE_TAG=' .env; then
+              sed -i "s/^IMAGE_TAG=.*/IMAGE_TAG=${{ github.sha }}/" .env
+            else
+              echo "IMAGE_TAG=${{ github.sha }}" >> .env
+            fi
 
             docker compose -f docker-compose.yml -f docker-compose.prod.yml pull --quiet
             docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --remove-orphans
@@ -428,9 +446,13 @@ jobs:
       # AFTER the deploy, against the deployed environment — never inside CI.
       # This is the one check that exercises the real model, which is exactly
       # why it does not belong in the pipeline above.
+      #
+      # `python3`, not `python`: ubuntu-latest ships no `python` alias unless
+      # actions/setup-python ran. While this job was disabled the bug was
+      # unobservable.
       - name: Smoke test the deployed environment
         run: |
-          python scripts/smoke_test.py \
+          python3 scripts/smoke_test.py \
             --base-url "https://${{ vars.APP_DOMAIN }}" \
             --timeout 180
 
