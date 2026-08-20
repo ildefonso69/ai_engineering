@@ -16,6 +16,35 @@ rm -f /rails/tmp/pids/server.pid
 if [ "${RUN_MIGRATIONS:-true}" = "true" ]; then
     echo "[entrypoint] preparing database..."
     ./bin/rails db:prepare
+
+    # Rails 8 gives solid_cache / solid_queue / solid_cable a database EACH.
+    # Here all four entries in config/database.yml resolve to the SAME physical
+    # database, and that is exactly what defeats `db:prepare`: for the three
+    # secondary entries it finds the database already exists, concludes there is
+    # nothing to do, and never loads db/{cache,queue,cable}_schema.rb.
+    #
+    # The symptom is silent and remote from the cause: every `Rails.cache` write
+    # raises `ArgumentError: No unique index found for key_hash`, and because the
+    # navbar badge swallows its own errors, the page renders fine while the whole
+    # cache layer is dead.
+    #
+    # `force: :cascade` inside those schema files means loading one DROPS the
+    # table, so this must be conditional, never unconditional: re-running it on
+    # every boot would wipe the job queue.
+    if [ "${RAILS_ENV}" = "production" ]; then
+        ./bin/rails runner '
+          {
+            "cache" => "solid_cache_entries",
+            "queue" => "solid_queue_jobs",
+            "cable" => "solid_cable_messages",
+          }.each do |name, table|
+            next if ActiveRecord::Base.connection.table_exists?(table)
+            puts "[entrypoint] loading db/#{name}_schema.rb (#{table} missing)"
+            load Rails.root.join("db", "#{name}_schema.rb")
+          end
+        '
+    fi
+
     echo "[entrypoint] database ready."
 else
     echo "[entrypoint] RUN_MIGRATIONS=false — skipping db:prepare."

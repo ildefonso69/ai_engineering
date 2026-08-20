@@ -36,7 +36,14 @@ RUN groupadd --system appgroup && \
 WORKDIR /app
 
 # Bring in the pre-built virtual environment from the builder stage.
-COPY --from=builder /app/.venv /app/.venv
+#
+# ``--chown`` ON THE COPY, never a ``chown -R`` afterwards. A recursive chown
+# rewrites every file, and in an overlay filesystem rewriting a file copies it
+# up into the new layer — so a trailing ``chown -R /app`` DUPLICATED the whole
+# 9.2 GB venv into a second layer and the image went from ~11 GB to ~28 GB
+# unpacked. On a 38 GB disk that is the difference between a deploy that fits
+# and one that fills the volume and takes the databases down with it.
+COPY --from=builder --chown=appuser:appgroup /app/.venv /app/.venv
 
 # Copy application source code.
 #
@@ -49,15 +56,12 @@ COPY --from=builder /app/.venv /app/.venv
 #   - pyproject.toml         → alembic's ``prepend_sys_path = .`` + tooling config
 #   - scripts/               → corpus builders and the S12/S13/S14 demo runners
 #   - data/                  → the seed corpora (~700 KB, cheap to bake in)
-COPY app/       /app/app/
-COPY alembic/   /app/alembic/
-COPY scripts/   /app/scripts/
-COPY data/      /app/data/
-COPY alembic.ini pyproject.toml /app/
-COPY docker-entrypoint.sh /app/docker-entrypoint.sh
-
-# Ensure the non-root user owns everything it needs to run.
-RUN chmod +x /app/docker-entrypoint.sh && chown -R appuser:appgroup /app
+COPY --chown=appuser:appgroup app/       /app/app/
+COPY --chown=appuser:appgroup alembic/   /app/alembic/
+COPY --chown=appuser:appgroup scripts/   /app/scripts/
+COPY --chown=appuser:appgroup data/      /app/data/
+COPY --chown=appuser:appgroup alembic.ini pyproject.toml /app/
+COPY --chown=appuser:appgroup --chmod=755 docker-entrypoint.sh /app/docker-entrypoint.sh
 
 # Put the virtual environment's bin directory first on PATH so `python` and
 # `uvicorn` resolve to the versions installed inside the venv.

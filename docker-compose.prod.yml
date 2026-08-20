@@ -67,8 +67,20 @@ services:
       business-backend:
         condition: service_healthy
 
+    # Comprueba que AMBOS puertos escuchan, y nada más.
+    #
+    # Lo evidente —`wget --spider http://localhost:80`— está MAL y falla
+    # siempre: Caddy responde 308 a https://localhost/, wget sigue el redirect,
+    # y no hay certificado para el nombre `localhost`, así que el handshake se
+    # corta. El contenedor queda `unhealthy` de forma permanente mientras sirve
+    # el sitio perfectamente — y cualquier `depends_on: service_healthy` sobre
+    # el proxy no arrancaría jamás.
+    #
+    # Un healthcheck del proxy debe probar el proxy, no la aplicación de detrás:
+    # si encadenas Rails aquí, un fallo de la aplicación marca como enfermo al
+    # componente que sí funciona.
     healthcheck:
-      test: ["CMD", "wget", "--spider", "-q", "http://localhost:80"]
+      test: ["CMD-SHELL", "nc -z 127.0.0.1 80 && nc -z 127.0.0.1 443"]
       interval: 30s
       timeout: 5s
       retries: 3
