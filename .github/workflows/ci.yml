@@ -116,7 +116,12 @@ jobs:
       DATABASE_URL: postgresql+psycopg://estimator:estimator@localhost:5433/estimator
       # Left unset ON PURPOSE: an empty AI_SERVICE_TOKEN disables the service
       # token middleware, which is what lets the whole suite run unauthenticated.
-      APP_ENV: test
+      # `test` NO es un entorno válido: app/config.py lo declara como
+      # Literal["development", "staging", "production"], así que get_settings()
+      # revienta AL IMPORTAR y pytest ni llega a cargar conftest.py (exit 4).
+      # El valor solo controla el renderizado de structlog: JSON en production,
+      # consola en el resto.
+      APP_ENV: development
 
     steps:
       - uses: actions/checkout@v4

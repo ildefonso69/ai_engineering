@@ -69,6 +69,7 @@ Lo que hay que tener **antes** de empezar:
 | **Dominio propio** | registro `A` → IP elástica, **ya propagado** | Let's Encrypt **no emite certificados para `*.amazonaws.com`**. Sin dominio no hay HTTPS |
 | Security group | entrante: 22, 80, 443 | Nada más |
 | Clave SSH | en tu máquina y en GitHub Secrets | Para desplegar |
+| **Arquitectura** | las imágenes deben ser **`linux/amd64`** | Una EC2 x86 no ejecuta una imagen `arm64`. Si construyes en un Mac de Apple Silicon, **deja que las construya el CI** |
 
 > **Comprueba el DNS antes de arrancar nada.** Si el dominio no resuelve todavía,
 > el desafío ACME falla y Caddy entra en reintentos con espera creciente.
@@ -358,6 +359,8 @@ Diagnóstico cuando algo falla: [`runbooks/ai-service-down.md`](runbooks/ai-serv
 | Rails responde **403 Blocked hosts** | `RAILS_ALLOWED_HOSTS` no coincide con el dominio | Ponlo bien y reinicia. El healthcheck sigue verde y despista, porque `/up` está excluido |
 | Los assets no cargan | La imagen se construyó en modo desarrollo | El job `build` tiene que pasar `RAILS_ENV=production` |
 | `no space left on device` | Imágenes viejas acumuladas | `docker image prune -af`; comprueba que la EBS tiene ≥30 GB |
+| `exec format error` / `platform (linux/arm64) does not match` | Imagen construida en un Mac Apple Silicon para una EC2 x86 | Construir en CI (runners amd64). Comprobar: `docker image inspect <img> --format '{{.Architecture}}'` |
+| Al cross-compilar: `At least one invalid signature was encountered` | Fallo de la emulación QEMU/Rosetta en la verificación GPG de `apt` | No es del Dockerfile. Dejar de emular: construir en amd64 nativo (CI o la propia instancia) |
 | Se muere durante las migraciones | Sin memoria construyendo índices HNSW | Comprueba el swap: `swapon --show` |
 | El corpus está vacío tras redesplegar | El nombre de proyecto de compose cambió | `COMPOSE_PROJECT_NAME=estimator`; comprueba `docker volume ls` |
 

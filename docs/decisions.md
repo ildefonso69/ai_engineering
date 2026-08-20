@@ -195,8 +195,6 @@ rubocop, importmap audit, tests). `dependabot.yml` se mueve también a la raíz 
 donde tampoco se estaba leyendo — y se amplía para vigilar el servicio IA, las
 propias acciones y las imágenes Docker.
 
-Las cuatro etapas intermedias quedan en `.github/ci-steps/`, fuera de
-`workflows/` para que no se ejecuten.
 
 ---
 

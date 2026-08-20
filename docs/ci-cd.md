@@ -11,33 +11,28 @@ El pipeline vive ahora en `.github/workflows/ci.yml` y cubre los dos proyectos.
 
 ---
 
-## Las cuatro etapas
+## Los seis jobs
 
-Se construye por capas, y cada una responde una pregunta distinta. Las versiones
-intermedias están en `.github/ci-steps/` (fuera de `workflows/` para que no se
-ejecuten) por si quieres reproducir el recorrido.
+Cada uno responde **una** pregunta, y esa es la disciplina que hace que un pipeline se pueda
+mantener: si no sabes decir qué pregunta responde un job, sobra.
 
-| # | Etapa | Pregunta | Fichero |
-|---|---|---|---|
-| 1 | Tests del servicio IA | ¿El código funciona? | `ci-steps/step-1-test.yml` |
-| 2 | + Rails y filtros de path | ¿Y el otro proyecto, sin reconstruirlo todo? | `ci-steps/step-2-both-projects.yml` |
-| 3 | + Contract test | ¿Siguen entendiéndose las dos capas? | `ci-steps/step-3-contract.yml` |
-| 4 | + Build de imágenes y hueco de CD | ¿Esto además se puede desplegar? | `ci-steps/step-4-build.yml` |
+| Job | Pregunta | Notas |
+|---|---|---|
+| `changes` | ¿Qué cambió? | `dorny/paths-filter`. En un monorepo es la diferencia entre 2 y 20 minutos |
+| `ai-service` | ¿Funciona el servicio IA? | `ruff` + 601 tests, con el LLM doblado. Necesita un service container de pgvector (ver abajo) |
+| `business-backend` | ¿Funciona el backend de negocio? | `brakeman`, `rubocop`, `importmap audit` y 192 tests, con WebMock |
+| `contract` | ¿Siguen entendiéndose las dos capas? | El único que ninguna de las dos suites puede sustituir |
+| `build` | ¿Esto se puede empaquetar y enviar? | Construye las dos imágenes y, desde `main`, las publica en GHCR |
+| `deploy` | ¿Llega a la máquina? | SSH + `pull && up -d`. Tras `vars.CD_ENABLED` |
 
 ```mermaid
 graph LR
-    ch["changes<br/><i>¿qué cambió?</i>"]
-    ai["ai-service<br/><i>ruff + pytest</i>"]
-    bb["business-backend<br/><i>brakeman + rubocop + test</i>"]
-    ct["contract<br/><i>OpenAPI ↔ cliente</i>"]
-    bd["build<br/><i>2 imágenes</i>"]
-    dp["deploy<br/><i>desactivado</i>"]
-
-    ch --> ai --> ct --> bd --> dp
-    ch --> bb --> bd
+    ch["changes"] --> ai["ai-service"] --> ct["contract"] --> bd["build"] --> dp["deploy"]
+    ch --> bb["business-backend"] --> bd
 ```
 
----
+**`ai-service` y `business-backend` corren en paralelo**: son proyectos independientes. `contract`
+espera a los dos porque los compara.
 
 ## Regla 1 — en CI no se llama al modelo
 

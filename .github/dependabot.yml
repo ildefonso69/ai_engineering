@@ -4,32 +4,42 @@
 # never read it -- Dependabot and Actions only look at .github/ in the REPOSITORY
 # ROOT. Moving it here is what actually switches it on, and it now covers the AI
 # service too, which was never watched at all.
+# Cadencia MENSUAL y tope bajo de PRs abiertas, a propósito.
+#
+# Con `weekly` y un tope de 10, la primera vez que este fichero aterrizó en main
+# Dependabot abrió una docena de pull requests de golpe. Cada una dispara el
+# pipeline, así que la pestaña Actions quedó ahogada justo cuando hacía falta
+# mirar la ejecución de verdad — y varias de esas PRs estaban en rojo.
+#
+# Un pipeline que genera más ruido del que alguien puede atender deja de ser una
+# señal: la gente aprende a ignorarlo. Menos PRs y mejor atendidas valen más que
+# muchas sin revisar.
 version: 2
 updates:
   - package-ecosystem: bundler
     directory: "/business-backend"
     schedule:
-      interval: weekly
-    open-pull-requests-limit: 10
+      interval: monthly
+    open-pull-requests-limit: 3
 
   - package-ecosystem: uv
     directory: "/ai-service"
     schedule:
-      interval: weekly
-    open-pull-requests-limit: 10
+      interval: monthly
+    open-pull-requests-limit: 3
 
   # The workflow's own actions. Pinned action versions rot like any other
   # dependency, and a stale one is a supply-chain risk.
   - package-ecosystem: github-actions
     directory: "/"
     schedule:
-      interval: weekly
-    open-pull-requests-limit: 10
+      interval: monthly
+    open-pull-requests-limit: 3
 
   - package-ecosystem: docker
     directories:
       - "/ai-service"
       - "/business-backend"
     schedule:
-      interval: weekly
-    open-pull-requests-limit: 5
+      interval: monthly
+    open-pull-requests-limit: 2
