@@ -125,6 +125,28 @@ Tres reglas concretas:
 GitHub enmascara los valores de `secrets.*` en los logs, pero eso es una red de
 seguridad, no una política: no protege de un `curl -v` que imprima cabeceras.
 
+### La excepción que hay hoy, y cómo revertirla
+
+El job `build` publica en GHCR con el `GITHUB_TOKEN` del workflow — acotado al repositorio y
+caducado al terminar la ejecución. Es la opción correcta.
+
+Pero la organización `LIDR-academy` no permite publicar paquetes bajo su cuenta (`denied:
+permission_denied: read_package`), así que hoy se publica bajo una cuenta personal usando dos
+ajustes del repositorio:
+
+| Tipo | Nombre | Para qué |
+|---|---|---|
+| Variable | `GHCR_OWNER` | La cuenta bajo la que se publica |
+| Secret | `GHCR_PAT` | Un PAT classic con `write:packages` |
+
+**Es una concesión, no una mejora.** Un PAT vive hasta que caduca o alguien lo revoca; el
+`GITHUB_TOKEN` no. Está anotado aquí para que sea una decisión visible y no un descuido.
+
+**Revertirlo cuando haya permisos:** borrar el secreto `GHCR_PAT` y poner `GHCR_OWNER` a la
+organización (o borrar también la variable). El workflow usa
+`${{ vars.GHCR_OWNER || github.repository_owner }}` y `${{ secrets.GHCR_PAT || secrets.GITHUB_TOKEN }}`,
+así que vuelve solo al camino bueno **sin editar código**.
+
 ---
 
 ## Regla 3 — reconstruir solo lo que cambió
