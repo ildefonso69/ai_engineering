@@ -1,0 +1,30 @@
+# FAILURE MODE 4 — the AI service IS reachable when it must not be.
+#
+# Symptom: everything works. That is exactly the problem — this failure is
+# invisible until someone points a scanner at the host.
+#
+#   curl http://localhost:8000/health   ->   200 OK        (must be refused)
+#
+# Cause: a `ports:` entry on the AI service. Usually added while debugging and
+# never removed. It publishes the port on the HOST, which means anything that
+# can reach the host can reach the AI service directly, bypassing the business
+# backend entirely.
+#
+# Fix: delete the `ports:` block. When you need the port for debugging, use the
+# dev override instead:
+#   docker compose -f docker-compose.yml -f docker-compose.dev.yml up
+#
+# Note the token is NOT a substitute for this: it authenticates callers, but the
+# absence of a published port is what makes the service unreachable in the first
+# place. Defence in depth — both, not either.
+services:
+  business-backend:
+    build: ./business-backend
+    ports:
+      - "3000:3000"
+
+  ai-service:
+    build: ./ai-service
+    # BROKEN: the security boundary of the whole session, deleted by one line
+    ports:
+      - "8000:8000"

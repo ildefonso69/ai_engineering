@@ -6,6 +6,10 @@ Todo el sistema (backend de negocio, servicio IA, base de datos relacional y bas
 vectorial) arranca con **un solo comando**, sin depender de qué tengas instalado en tu máquina
 ni de que recuerdes el orden de arranque.
 
+> Índice general en [`docs/README.md`](README.md). La topología y el contrato entre capas están
+> en [`docs/architecture.md`](architecture.md); si algo está caído, ve directo al
+> [runbook](runbooks/ai-service-down.md).
+
 ---
 
 ## Nomenclatura
@@ -66,6 +70,27 @@ El healthcheck del servicio IA apunta a `/health`, que **no llama al LLM ni toca
 datos**: solo dice si el proceso está vivo. Si llamara al modelo, cada 30 segundos estarías
 pagando tokens por comprobar que el contenedor sigue en pie.
 
+Para la pregunta distinta —*¿puede el servicio IA atender una petición?*— está `/health/ready`,
+que sí comprueba la BBDD vectorial y Redis, y devuelve **503 nombrando la que falla**:
+
+```bash
+docker compose exec business-backend curl -s http://ai-service:8000/health/ready
+# {"status":"ready","checks":{"vector_db":{"ok":true,...},"redis":{"ok":true,...}}}
+```
+
+Pruébalo parando una dependencia — la liveness sigue en 200 y la readiness pasa a 503:
+
+```bash
+docker compose stop redis
+docker compose exec business-backend curl -s http://ai-service:8000/health/ready
+# {"status":"not_ready","checks":{"vector_db":{"ok":true,...},
+#                                 "redis":{"ok":false,"detail":"ConnectionError"}}}
+docker compose start redis
+```
+
+**Tampoco `/health/ready` llama al LLM.** Una llamada al modelo cuesta dinero y segundos, y
+convertiría un proveedor con rate limit en una caída autoinfligida.
+
 ### 2. El backend de negocio responde desde el host
 
 ```bash
@@ -97,9 +122,10 @@ Dos detalles que conviene entender:
 
 - **`http://ai-service:8000`, no `http://localhost:8000`.** Dentro de un contenedor, `localhost`
   es ese contenedor. Compose da resolución DNS por nombre de servicio.
-- **`/health` responde sin token a propósito.** Es la única ruta exenta (junto a `/docs`),
-  porque el healthcheck de Docker no puede llevar credenciales. Es seguro porque no revela nada
-  ni ejecuta trabajo.
+- **`/health` y `/health/ready` responden sin token a propósito.** Son las únicas rutas exentas
+  (junto a `/docs`), porque ni el healthcheck de Docker ni la sonda de la plataforma pueden
+  llevar credenciales. Es seguro porque no revelan nada más que el nombre de la dependencia
+  caída, ni ejecutan trabajo.
 
 Cualquier otra ruta sí exige el token:
 
@@ -137,6 +163,16 @@ Para verlo en los logs mientras ocurre:
 ```bash
 docker compose logs -f ai-service
 ```
+
+O, sin tocar el navegador, con el smoke test — que hace estas mismas comprobaciones y además
+verifica la frontera:
+
+```bash
+python scripts/smoke_test.py --base-url http://localhost:3000
+```
+
+Ojo: contra el compose **estricto** la comprobación de la frontera pasa; si arrancaste con el
+override de desarrollo, el smoke test te dirá —correctamente— que el 8000 está abierto.
 
 ### 5. Los datos sobreviven a un reinicio
 

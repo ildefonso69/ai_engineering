@@ -79,12 +79,19 @@ module EstimatorAi
       assert_includes err.message, "ANTHROPIC_API_KEY"
     end
 
-    test "raises ServerError on 503 store unavailable" do
+    test "raises ServiceUnavailable on 503 store unavailable" do
+      # Session 15: this used to expect ServerError, because 503 had no branch
+      # of its own and fell into the catch-all. Redis being down is transient —
+      # the caller should retry, not report a broken system — so it now raises
+      # ServiceUnavailable.
       stub_request(:put, "http://ai-test/api/v1/config/models")
         .to_return(status: 503, body: { detail: "Runtime config store unavailable" }.to_json,
                    headers: { "Content-Type" => "application/json" })
 
-      assert_raises(EstimatorAi::ServerError) { @client.update_models("PRIMARY_MODEL" => "gpt-4o") }
+      error = assert_raises(EstimatorAi::ServiceUnavailable) do
+        @client.update_models("PRIMARY_MODEL" => "gpt-4o")
+      end
+      assert_match(/Runtime config store unavailable/, error.message)
     end
 
     test "raises ArgumentError on empty changes without touching the network" do

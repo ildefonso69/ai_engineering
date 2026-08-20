@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import os
+
 import pytest
 from fastapi.testclient import TestClient
 
@@ -15,6 +17,71 @@ from app.domain.schemas.estimation import EstimationResult
 from app.domain.estimation_service import EstimationService
 from app.generation.conversation.models import ProjectMetadata
 from app.generation.conversation.store import SessionStore
+
+
+# Variables the suite must never inherit from a developer's machine. Everything
+# here has a code default the tests assert against, so a local override silently
+# turns green tests red -- or, worse, red tests green.
+#
+# ``OPENAI_API_KEY`` is deliberately NOT removed but REPLACED: ``app/config.py``
+# refuses to build ``Settings`` without a provider key, and the suite never makes
+# a real call anyway.
+_LEAKY_ENV_PREFIXES = (
+    "PRIMARY_MODEL",
+    "FALLBACK_MODEL",
+    "CRITIC_MODEL",
+    "EMBEDDING_MODEL",
+    "REFORMULATION_MODEL",
+    "GENERATION_MODEL",
+    "ROUTER_MODEL",
+    "QUERY_TRANSFORM_MODEL",
+    "AGENT_MODEL",
+    "GRAPH_",
+    "SUPERVISOR_",
+    "RETRIEVAL_",
+    "SEMANTIC_CACHE_",
+    "TASK_HOURS_",
+    "AI_SERVICE_TOKEN",
+    "ESTIMATE_API_KEY",
+)
+
+
+@pytest.fixture(autouse=True, scope="session")
+def _hermetic_environment() -> None:
+    """Make the suite independent of the developer's ``ai-service/.env``.
+
+    Two mechanisms leak that file into the tests, and the second one is not
+    obvious:
+
+    1. ``Settings`` declares ``env_file=".env"``, so any ``Settings()`` built
+       while the working directory is ``ai-service/`` reads it.
+    2. **The ``deepeval`` pytest plugin calls ``load_dotenv()`` when pytest loads
+       it**, which copies the whole file into ``os.environ`` before a single test
+       runs. That one survives ``_env_file=None``, because environment variables
+       outrank the file -- so even a test that carefully builds
+       ``Settings(_env_file=None)`` still sees the developer's values.
+
+    The symptom this fixes: with ``PRIMARY_MODEL=gpt-4o`` in a local ``.env``,
+    seven runtime-config / llm-wrapper tests fail with ``'gpt-4o' == 'gpt-4o-mini'``
+    on a laptop and pass in CI -- where no ``.env`` exists. Local and CI must
+    agree, so we strip the leak here instead of relying on its absence.
+    """
+    for key in list(os.environ):
+        if key.startswith(_LEAKY_ENV_PREFIXES):
+            del os.environ[key]
+
+    # A syntactically valid dummy: present enough for validation, useless for a
+    # real call. If a test ever reaches the network, it fails loudly.
+    os.environ["OPENAI_API_KEY"] = "sk-test-not-a-real-key"
+    os.environ.pop("ANTHROPIC_API_KEY", None)
+
+    # The settings singleton may already have been built from the polluted
+    # environment while collecting modules.
+    get_settings.cache_clear()
+
+    yield
+
+    get_settings.cache_clear()
 
 
 @pytest.fixture(autouse=True)

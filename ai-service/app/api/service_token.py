@@ -51,9 +51,14 @@ SERVICE_TOKEN_HEADER = "X-Service-Token"
 #
 # The docs endpoints stay open so the interactive API browser keeps working; the
 # operations they describe are still guarded.
+# ``/health/ready`` joins it for the same reason (Session 15): a platform
+# readiness probe — a load balancer's, Kubernetes' — has no way to present a
+# credential
+# either, and it reveals only which dependency is down, never a value.
 EXEMPT_PATHS = frozenset(
     {
         "/health",
+        "/health/ready",
         "/docs",
         "/docs/oauth2-redirect",
         "/redoc",

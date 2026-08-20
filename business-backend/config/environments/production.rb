@@ -79,12 +79,22 @@ Rails.application.configure do
   # Only use :id for inspections in production.
   config.active_record.attributes_for_inspect = [ :id ]
 
-  # Enable DNS rebinding protection and other `Host` header attacks.
-  # config.hosts = [
-  #   "example.com",     # Allow requests from example.com
-  #   /.*\.example\.com/ # Allow requests from subdomains like `www.example.com`
-  # ]
+  # Session 15 — DNS rebinding / Host header protection.
   #
-  # Skip DNS rebinding protection for the default health check endpoint.
-  # config.host_authorization = { exclude: ->(request) { request.path == "/up" } }
+  # Left commented by the generator, which means production would answer to ANY
+  # Host header. Driven by an environment variable so the same image runs in
+  # staging and production without a rebuild (twelve-factor):
+  #
+  #     RAILS_ALLOWED_HOSTS="estimator.tu-dominio.com,.tu-dominio.com"
+  #
+  # A leading dot means "this host and its subdomains". When the variable is
+  # unset the check stays off, so a deploy never breaks just because someone
+  # forgot it — but any real deployment should set it.
+  allowed_hosts = ENV.fetch("RAILS_ALLOWED_HOSTS", "").split(",").map(&:strip).reject(&:blank?)
+  if allowed_hosts.any?
+    config.hosts = allowed_hosts.map { |host| host.start_with?(".") ? /.*#{Regexp.escape(host)}\z/ : host }
+    # The platform's health check calls /up by IP, with no Host header to match,
+    # so it must bypass the allowlist or the service never reports healthy.
+    config.host_authorization = { exclude: ->(request) { request.path == "/up" } }
+  end
 end

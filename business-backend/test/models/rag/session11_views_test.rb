@@ -28,10 +28,10 @@ class RagSession11ViewsTest < ActiveSupport::TestCase
     cr = Rag::CitationReportView.from_hash(
       "total_lines" => 3, "grounded_lines" => 2, "dangling_lines" => 1,
       "insufficient_lines" => 0, "verified_citations" => 2,
-      "dangling_citations" => ["999"]
+      "dangling_citations" => [ "999" ]
     )
     assert cr.has_dangling?
-    assert_equal ["999"], cr.dangling_citations
+    assert_equal [ "999" ], cr.dangling_citations
     assert_equal 2, cr.grounded_lines
   end
 

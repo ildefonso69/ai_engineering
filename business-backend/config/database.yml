@@ -82,21 +82,32 @@ test:
 # Read https://guides.rubyonrails.org/configuring.html#configuring-a-database
 # for a full overview on how database connection configuration can be specified.
 #
+# Session 15 — production on a managed platform.
+#
+# Rails 8 generates four production databases (primary + cache + queue + cable,
+# i.e. solid_cache / solid_queue / solid_cable). That default assumes you own the
+# database server. A managed platform hands you ONE database, and provisioning
+# four to hold three background tables is neither cheap nor useful at this scale.
+#
+# So all four entries point at the SAME database via DATABASE_URL. Rails keeps
+# treating them as separate connections — separate pools, separate
+# `migrations_paths` — but they resolve to one physical database, and the
+# solid_* tables simply live alongside the application tables. Splitting them
+# later is a configuration change, not a migration.
+#
+# `url:` (not host/username/password) because that is what every platform hands
+# you: one connection string, injected as a secret. Twelve-factor, and nothing
+# to reconstruct from parts.
 production:
   primary: &primary_production
     <<: *default
-    database: estimator_web_production
-    username: estimator_web
-    password: <%= ENV["ESTIMATOR_WEB_DATABASE_PASSWORD"] %>
+    url: <%= ENV["DATABASE_URL"] %>
   cache:
     <<: *primary_production
-    database: estimator_web_production_cache
     migrations_paths: db/cache_migrate
   queue:
     <<: *primary_production
-    database: estimator_web_production_queue
     migrations_paths: db/queue_migrate
   cable:
     <<: *primary_production
-    database: estimator_web_production_cable
     migrations_paths: db/cable_migrate

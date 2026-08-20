@@ -17,3 +17,4 @@ build
 .vscode
 README.md
 tests
+data/evals

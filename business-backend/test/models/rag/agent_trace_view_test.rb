@@ -11,7 +11,7 @@ class RagAgentTraceViewTest < ActiveSupport::TestCase
           "step" => 1,
           "reasoning_summary" => "Search analogs for the flagged task.",
           "tool" => "search_budgets",
-          "tool_args" => { "query" => "logistics tracking", "filters" => { "sectors" => ["logistics"] } },
+          "tool_args" => { "query" => "logistics tracking", "filters" => { "sectors" => [ "logistics" ] } },
           "observation" => "2 historical items; hours=[940, 1150]"
         },
         {

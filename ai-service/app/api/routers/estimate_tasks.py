@@ -42,7 +42,7 @@ async def hours(request: Request, payload: TaskHoursRequest) -> TaskHoursResult:
     request_id = get_request_id(request)
     if get_embedder() is None:
         log.error("stage_failed", stage="task_hours", reason="embedder_unavailable")
-        raise HTTPException(status_code=500, detail="Embedding service is not available.")
+        raise HTTPException(status_code=503, detail="Embedding service is not available.")
 
     runtime = get_runtime_retrieval_config()
     task_count = sum(len(m.tasks) for m in payload.modules)
@@ -54,7 +54,11 @@ async def hours(request: Request, payload: TaskHoursRequest) -> TaskHoursResult:
                 distance_threshold=runtime.effective_task_hours_distance_threshold(),
             )
     except RetrievalError as exc:
-        raise HTTPException(status_code=502, detail="Retrieval failed.") from exc
+        # 503, not 502: RetrievalError means the vector store could not be
+        # queried at all (connection/DB failure), which is an unavailable
+        # dependency. A 502 would say "the upstream answered badly" and would
+        # tell the caller to give up instead of to retry.
+        raise HTTPException(status_code=503, detail="Retrieval failed.") from exc
     except Exception as exc:  # noqa: BLE001 — embedding/other failures → 502.
         log.error("stage_failed", stage="task_hours", error_type=type(exc).__name__)
         raise HTTPException(status_code=502, detail="Failed to estimate task hours.") from exc

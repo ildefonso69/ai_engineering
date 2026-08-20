@@ -98,7 +98,7 @@ def create_index_run(
     """Add a batch of new documents to the corpus (async). Returns 202 + job_id."""
     if service is None:
         log.error("corpus_index_unavailable", reason="embedder_unavailable")
-        raise HTTPException(status_code=500, detail="Embedding service is not available.")
+        raise HTTPException(status_code=503, detail="Embedding service is not available.")
 
     job = JobsRepository(session).create(source_name=f"corpus-expansion:{request.chunk_type}")
     background.add_task(

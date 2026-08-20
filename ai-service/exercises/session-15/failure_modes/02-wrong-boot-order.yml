@@ -1,0 +1,28 @@
+# FAILURE MODE 2 — services start in the wrong order.
+#
+# Symptom: `business-backend` crash-loops on the first `docker compose up` with
+#   PG::ConnectionBad: could not connect to server
+# and then works on the second try, which is what makes it so confusing.
+#
+# Cause: `depends_on` as a LIST only waits for the container to be CREATED, not
+# for the process inside it to be ready to accept connections. Postgres takes a
+# few seconds to initialise; Rails does not wait.
+#
+# Fix: the long form with `condition: service_healthy`, plus a healthcheck on
+# the dependency. Compare with the real docker-compose.yml.
+services:
+  business-backend:
+    build: ./business-backend
+    ports:
+      - "3000:3000"
+    # BROKEN: waits for creation, not for readiness
+    depends_on:
+      - postgres
+      - ai-service
+
+  ai-service:
+    build: ./ai-service
+
+  postgres:
+    image: postgres:16-alpine
+    # BROKEN: no healthcheck, so there is nothing to wait FOR

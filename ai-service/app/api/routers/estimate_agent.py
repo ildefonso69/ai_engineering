@@ -55,7 +55,7 @@ def _require_async_client():
     client = get_async_openai_client()
     if client is None:
         log.error("agent_failed", reason="async_openai_client_unavailable")
-        raise HTTPException(status_code=500, detail="OpenAI client is not available.")
+        raise HTTPException(status_code=503, detail="OpenAI client is not available.")
     return client
 
 
@@ -97,7 +97,7 @@ async def hours(request: Request, payload: AgentHoursRequest) -> TaskHoursResult
     client = _require_async_client()
     if get_embedder() is None:
         log.error("agent_failed", stage="hours", reason="embedder_unavailable")
-        raise HTTPException(status_code=500, detail="Embedding service is not available.")
+        raise HTTPException(status_code=503, detail="Embedding service is not available.")
 
     runtime = get_runtime_retrieval_config()
     top_k = payload.search_top_k if payload.search_top_k is not None else runtime.effective_task_hours_top_k()

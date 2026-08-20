@@ -43,7 +43,7 @@ async def ingest(
     if service is None:
         # No OPENAI_API_KEY configured. Generic message to the client, detail logged.
         log.error("embeddings_ingest_failed", reason="embedder_unavailable")
-        raise HTTPException(status_code=500, detail="Embedding service is not available.")
+        raise HTTPException(status_code=503, detail="Embedding service is not available.")
 
     log.info(
         "embeddings_ingest_received",
@@ -91,7 +91,7 @@ def compare(
     """
     if embedder is None:
         log.error("embeddings_compare_failed", reason="embedder_unavailable")
-        raise HTTPException(status_code=500, detail="Embedding service is not available.")
+        raise HTTPException(status_code=503, detail="Embedding service is not available.")
 
     names = request.strategies or ALL_STRATEGIES
     try:

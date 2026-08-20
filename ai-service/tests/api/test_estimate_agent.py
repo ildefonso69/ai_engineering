@@ -197,13 +197,15 @@ def test_overrides_are_passed_through(client, monkeypatch):
 
 
 # --- misconfiguration ------------------------------------------------------ #
-def test_structure_missing_client_is_500(client, monkeypatch):
+def test_structure_missing_client_is_503(client, monkeypatch):
+    # Session 15: a missing dependency is 503, not 500 — the process is fine,
+    # what it needs to do the work is not.
     monkeypatch.setattr(agent_router, "get_async_openai_client", lambda: None)
     r = client.post("/v1/estimate/agent/structure", json=_QUERY, headers=_h())
-    assert r.status_code == 500
+    assert r.status_code == 503
 
 
-def test_hours_missing_embedder_is_500(client, monkeypatch):
+def test_hours_missing_embedder_is_503(client, monkeypatch):
     monkeypatch.setattr(agent_router, "get_embedder", lambda: None)
     r = client.post("/v1/estimate/agent/hours", json=_MODULES, headers=_h())
-    assert r.status_code == 500
+    assert r.status_code == 503

@@ -105,6 +105,22 @@ module Rag
       redirect_back_to_run("Entrada rechazada por guardarraíles: #{e.message}")
     rescue EstimatorAi::InvalidRequest => e
       redirect_back_to_run("Petición inválida: #{e.message}")
+    rescue EstimatorAi::Unauthorized => e
+      # Session 15: this used to escape the wrapper entirely and render a Rails
+      # 500 page, hiding an actionable message. A 401 here is nearly always a
+      # configuration mismatch between the two services, not a runtime failure.
+      redirect_back_to_run("El servicio IA rechazó nuestras credenciales. " \
+                           "Revisa AI_SERVICE_TOKEN en ambos servicios. (#{e.message})")
+    rescue EstimatorAi::ServiceUnavailable => e
+      # Session 15: transient by definition (vector DB / Redis / embedder down),
+      # so the copy invites a retry instead of reporting a broken system.
+      redirect_back_to_run("Una dependencia del servicio IA no está disponible " \
+                           "ahora mismo; reintenta en unos segundos. (#{e.message})")
+    rescue EstimatorAi::RateLimited => e
+      redirect_back_to_run("Has alcanzado el límite de peticiones del servicio IA. " \
+                           "#{e.retry_after ? "Reintenta en #{e.retry_after}s." : 'Reintenta en un momento.'}")
+    rescue EstimatorAi::Conflict => e
+      redirect_back_to_run("La ejecución no está en un punto que admita esa acción: #{e.message}")
     rescue EstimatorAi::ServerError => e
       redirect_back_to_run("Error del servicio IA: #{e.message}")
     rescue Faraday::TimeoutError, Faraday::ConnectionFailed => e

@@ -1,0 +1,181 @@
+# =============================================================================
+# Override de PRODUCCIÓN (Sesión 15) — EC2 + Caddy
+# =============================================================================
+# Uso (siempre los DOS ficheros, en este orden):
+#
+#     docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
+#
+# En la instancia lo lanza systemd (deploy/estimator.service), así que nadie
+# tiene que acordarse de la ristra de flags.
+#
+# EL CAMBIO CONCEPTUAL DEL FICHERO:
+#
+#   En local, el servicio público era Rails (`ports: 3000:3000`).
+#   Aquí, el servicio público es CADDY, y Rails pasa a ser interno.
+#
+# Antes                            Después
+#   host:3000 ──▶ business-backend   host:443 ──▶ caddy ──▶ business-backend
+#                                                    (TLS)      (sin ports)
+#
+# La frontera se sostiene sobre TRES capas independientes, y ninguna basta sola:
+#   1. Security group de AWS  — solo entran 22, 80 y 443
+#   2. ufw en la instancia    — lo mismo, por si el security group se toca
+#   3. este fichero           — solo `caddy` declara `ports:`
+#
+# Diferencias con el compose local, y por qué:
+#   · `image:` en vez de `build:` — la instancia NO compila. La imagen del
+#     servicio IA son ~4,9 GB (torch); construirla en una t3.medium es lento y
+#     se queda sin memoria. La construye CI y aquí solo se descarga.
+#   · Rails en producción de verdad: SECRET_KEY_BASE, DATABASE_URL y
+#     RAILS_ALLOWED_HOSTS.
+#   · Volumen para Active Storage: sin él los adjuntos viven en la capa
+#     escribible del contenedor y desaparecen en cada redespliegue.
+#   · Límite de tamaño de logs en cada servicio.
+#   · Tuning de pgvector bajado a lo que cabe en 4 GB.
+# =============================================================================
+
+services:
+  # ---------------------------------------------------------------------------
+  # Caddy — EL ÚNICO SERVICIO EXPUESTO A INTERNET
+  # ---------------------------------------------------------------------------
+  caddy:
+    image: caddy:2.8-alpine
+    container_name: caddy
+    restart: unless-stopped
+
+    # Los dos únicos puertos abiertos del sistema entero.
+    # El 80 no es opcional: además de redirigir a HTTPS, es por donde Let's
+    # Encrypt valida el dominio (desafío HTTP-01). Si lo cierras, no hay
+    # certificado.
+    ports:
+      - "80:80"
+      - "443:443"
+
+    environment:
+      APP_DOMAIN: "${APP_DOMAIN:?falta APP_DOMAIN -- Caddy pide el certificado para este dominio}"
+
+    volumes:
+      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
+      # Los certificados van en un volumen con nombre A PROPÓSITO. Si se
+      # perdieran en cada redespliegue, Caddy volvería a pedirlos y Let's
+      # Encrypt tiene un límite de 5 por dominio y semana: al sexto deploy te
+      # quedas sin HTTPS durante días.
+      - caddy_data:/data
+      - caddy_config:/config
+
+    depends_on:
+      business-backend:
+        condition: service_healthy
+
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:80"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+    logging:
+      driver: json-file
+      options: { max-size: "10m", max-file: "3" }
+
+  # ---------------------------------------------------------------------------
+  # Backend de negocio — AHORA INTERNO
+  # ---------------------------------------------------------------------------
+  business-backend:
+    # Imagen construida y publicada por CI. `latest` para el arranque manual;
+    # el pipeline despliega por SHA, que es lo que hace posible el rollback:
+    # volver atrás es apuntar a otra etiqueta, no reconstruir nada.
+    image: "${IMAGE_REGISTRY:-ghcr.io}/${IMAGE_OWNER:?falta IMAGE_OWNER}/business-backend:${IMAGE_TAG:-latest}"
+    build: !reset null
+
+    # ¡OJO! Esto NO borra el `ports:` del fichero base: compose FUSIONA las
+    # listas, no las sustituye. `!reset` es lo que lo elimina de verdad (compose
+    # v2.24+). Sin esta línea el 3000 seguiría publicado y la frontera estaría
+    # rota mientras todo parece correcto.
+    ports: !reset []
+
+    environment:
+      RAILS_ENV: production
+      RAILS_LOG_TO_STDOUT: "1"
+      RAILS_SERVE_STATIC_FILES: "true"
+
+      # Sin esto Rails responde 403 Blocked hosts a TODO — y el healthcheck
+      # sigue verde, porque /up está excluido de la comprobación. Un fallo que
+      # parece de la aplicación y es de configuración.
+      RAILS_ALLOWED_HOSTS: "${APP_DOMAIN}"
+
+      # Firma las cookies de sesión. Si cambia, todas las sesiones se invalidan.
+      SECRET_KEY_BASE: "${SECRET_KEY_BASE:?falta SECRET_KEY_BASE -- generalo con openssl rand -hex 64}"
+
+      # El bloque `production:` de database.yml usa `url:`, no host/usuario/
+      # contraseña como el de desarrollo. Sin esta variable Rails arranca con
+      # una URL nula y falla al primer query.
+      DATABASE_URL: "postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@postgres:5432/${POSTGRES_DB:-estimator_web_production}"
+
+    volumes:
+      # Active Storage escribe en el sistema de ficheros del contenedor. Sin
+      # este volumen los adjuntos se pierden en cada redespliegue — y hoy ya
+      # pasa, incluso con una sola réplica.
+      - active_storage:/rails/storage
+
+    logging:
+      driver: json-file
+      options: { max-size: "10m", max-file: "3" }
+
+  # ---------------------------------------------------------------------------
+  # Servicio IA — sigue sin `ports:`, igual que en local
+  # ---------------------------------------------------------------------------
+  ai-service:
+    image: "${IMAGE_REGISTRY:-ghcr.io}/${IMAGE_OWNER:?falta IMAGE_OWNER}/ai-service:${IMAGE_TAG:-latest}"
+    build: !reset null
+
+    environment:
+      APP_ENV: production
+      LOG_LEVEL: INFO
+      # Aplica `alembic upgrade head` al arrancar. Con varias réplicas, ponlo a
+      # false en todas menos una: no quieres dos procesos migrando a la vez.
+      RUN_MIGRATIONS: "true"
+
+    logging:
+      driver: json-file
+      options: { max-size: "10m", max-file: "3" }
+
+  # ---------------------------------------------------------------------------
+  # Bases de datos y Redis — internas, con el tuning ajustado a 4 GB
+  # ---------------------------------------------------------------------------
+  postgres:
+    environment:
+      POSTGRES_DB: "${POSTGRES_DB:-estimator_web_production}"
+    logging:
+      driver: json-file
+      options: { max-size: "10m", max-file: "3" }
+
+  vector-db:
+    # El compose local está tuneado para un portátil con memoria de sobra. En
+    # una t3.medium (4 GB) hay que compartir con Rails, el servicio IA, Redis y
+    # Caddy, así que se baja. La construcción de índices HNSW es el pico, y por
+    # eso bootstrap.sh añade swap.
+    shm_size: 256mb
+    command: >
+      postgres
+      -c shared_buffers=256MB
+      -c effective_cache_size=768MB
+      -c work_mem=16MB
+      -c maintenance_work_mem=192MB
+      -c max_parallel_maintenance_workers=1
+    logging:
+      driver: json-file
+      options: { max-size: "10m", max-file: "3" }
+
+  redis:
+    # `redis-stack-server` en vez de `redis-stack`: misma RediSearch (que la
+    # caché semántica necesita) pero sin RedisInsight, que en el otro añade una
+    # interfaz web en el 8001 que aquí no queremos ni levantar.
+    image: redis/redis-stack-server:7.4.0-v0
+    logging:
+      driver: json-file
+      options: { max-size: "10m", max-file: "3" }
+
+volumes:
+  caddy_data:
+  caddy_config:
+  active_storage:

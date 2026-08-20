@@ -5,6 +5,7 @@ guides/
 # Real environment values for the root docker-compose (API keys, service token).
 # The versioned template is .env.example — never commit the filled-in .env.
 .env
+ai-eng-aws.pem
 
 # Local environment / editor cruft (the project also has its own .gitignore
 # inside ai-service/, this catches files at the repo root).
@@ -13,3 +14,14 @@ guides/
 .vscode/
 __pycache__/
 .claude/
+
+# Evaluation run artifacts (Session 15): captured structures and a 23 MB
+# embedding cache. They are local run output, not source — and ai-service's
+# Dockerfile does `COPY data/`, so leaving them tracked would bake them into
+# the image.
+ai-service/data/evals/
+
+# Volcados del corpus vectorial (S15). Son datos, no fuente: decenas de MB con
+# los embeddings ya pagados. Se copian a la instancia con scp, nunca por git.
+backups/
+*.dump

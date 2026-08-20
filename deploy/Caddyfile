@@ -1,0 +1,54 @@
+# Session 15 — the only service exposed to the internet.
+#
+# Caddy is what the PaaS used to be: it terminates TLS, obtains and renews the
+# certificate automatically (ACME / Let's Encrypt), and forwards plain HTTP to
+# the business backend inside the private Docker network.
+#
+# Why a domain is a requirement and not a preference: Let's Encrypt will not
+# issue certificates for *.amazonaws.com, so the EC2 public DNS name cannot get
+# one. The A record must point at the Elastic IP BEFORE the first start, or the
+# ACME challenge fails and Caddy retries with a backoff.
+#
+# {$APP_DOMAIN} comes from the environment (docker-compose.prod.yml passes it),
+# so the same image serves staging and production — twelve-factor: the config
+# changes, the artifact does not.
+
+{$APP_DOMAIN} {
+	# `business-backend` is a compose service name, resolved by Docker's internal
+	# DNS. It is NOT reachable from the internet: it publishes no port. The only
+	# path in is through this proxy.
+	reverse_proxy business-backend:3000 {
+		# Rails runs with `assume_ssl = true`, so it trusts these headers to decide
+		# it is behind TLS. That is what stops `force_ssl` from redirecting in a
+		# loop, and what makes it set Secure cookies correctly.
+		header_up X-Forwarded-Proto https
+
+		# The estimation endpoints legitimately take minutes (gpt-5 with high
+		# reasoning effort). The proxy MUST be more patient than the application,
+		# or it will cut a request the backend is still working on — and the user
+		# gets an opaque 504 while the server keeps burning tokens for nobody.
+		# Rails gives up at ESTIMATOR_AI_TIMEOUT (180 s) plus its own overhead.
+		transport http {
+			read_timeout 600s
+			write_timeout 600s
+		}
+	}
+
+	encode zstd gzip
+
+	# Structured logs to stdout so they land in `docker compose logs` and get
+	# rotated by the daemon-level cap set in bootstrap.sh.
+	log {
+		output stdout
+		format json
+	}
+
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		X-Content-Type-Options "nosniff"
+		X-Frame-Options "SAMEORIGIN"
+		# Caddy announces itself by default; there is no reason to tell the
+		# internet which proxy and version you run.
+		-Server
+	}
+}

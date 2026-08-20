@@ -2,6 +2,12 @@
 require "rubygems"
 require "bundler/setup"
 
-ARGV.unshift("--ensure-latest")
+# Session 15: `--ensure-latest` hacía que el escaneo fallara (exit 5) cada vez
+# que se publicaba una versión nueva de brakeman, aunque el código estuviera
+# impecable. En CI eso es una señal FALSA: el pipeline se pone rojo por algo
+# que no ha hecho nadie de este equipo, y la gente aprende a ignorarlo.
+# Mantener la gema al día es trabajo de Dependabot (.github/dependabot.yml,
+# ecosistema bundler, semanal), no de un gate de cada commit.
+# ARGV.unshift("--ensure-latest")
 
 load Gem.bin_path("brakeman", "brakeman")

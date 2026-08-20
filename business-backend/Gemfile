@@ -26,6 +26,13 @@ gem "faraday"
 # (no system binary needed, unlike wkhtmltopdf/headless-chrome).
 gem "prawn"
 gem "prawn-table"
+# Ruby 3.4 removed `matrix` from the default gems, and prawn requires it without
+# declaring it. Until now it arrived by accident, as a transitive dependency of
+# capybara — a TEST gem. Any production install that excludes the test group
+# (`bundle config without "development test"`) therefore crashed on boot with
+# `cannot load such file -- matrix`. Declared explicitly so it does not depend
+# on which groups happen to be installed.
+gem "matrix"
 # Multipart upload support (Session 5: attachments)
 gem "faraday-multipart"
 
@@ -43,11 +50,6 @@ gem "solid_cable"
 # Reduces boot times through caching; required in config/boot.rb
 gem "bootsnap", require: false
 
-# Deploy this application anywhere as a Docker container [https://kamal-deploy.org]
-gem "kamal", require: false
-
-# Add HTTP asset caching/compression and X-Sendfile acceleration to Puma [https://github.com/basecamp/thruster/]
-gem "thruster", require: false
 
 # Use Active Storage variants [https://guides.rubyonrails.org/active_storage_overview.html#transforming-images]
 # gem "image_processing", "~> 1.2"

@@ -1,0 +1,35 @@
+# Dependency updates for BOTH projects of the monorepo.
+#
+# Session 15: this file used to live in business-backend/.github/, where GitHub
+# never read it -- Dependabot and Actions only look at .github/ in the REPOSITORY
+# ROOT. Moving it here is what actually switches it on, and it now covers the AI
+# service too, which was never watched at all.
+version: 2
+updates:
+  - package-ecosystem: bundler
+    directory: "/business-backend"
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 10
+
+  - package-ecosystem: uv
+    directory: "/ai-service"
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 10
+
+  # The workflow's own actions. Pinned action versions rot like any other
+  # dependency, and a stale one is a supply-chain risk.
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 10
+
+  - package-ecosystem: docker
+    directories:
+      - "/ai-service"
+      - "/business-backend"
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5

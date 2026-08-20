@@ -1,0 +1,56 @@
+{
+  "$comment": [
+    "Session 15 — the cross-layer contract, as data.",
+    "Every route the business backend (Rails) calls on the AI service, with the",
+    "path template the AI service publishes in its OpenAPI document. Extracted",
+    "from business-backend/app/services/estimator_ai/*.rb.",
+    "",
+    "ai-service/scripts/check_contract.py validates this file against the live",
+    "OpenAPI schema in CI. When it fails, one of the two layers moved without",
+    "the other -- which is exactly the breakage a contract test exists to catch.",
+    "",
+    "The pattern is stack-agnostic: any HTTP client would produce the same list."
+  ],
+  "routes": [
+    { "client": "EstimationsClient", "method": "post", "path": "/api/v1/estimate" },
+
+    { "client": "SessionsClient", "method": "post", "path": "/sessions" },
+    { "client": "SessionsClient", "method": "get",  "path": "/sessions/{session_id}" },
+    { "client": "SessionsClient", "method": "post", "path": "/sessions/{session_id}/estimate" },
+    { "client": "SessionsClient", "method": "post", "path": "/sessions/{session_id}/estimate-acb" },
+
+    { "client": "ConfigClient", "method": "get", "path": "/api/v1/config/models" },
+    { "client": "ConfigClient", "method": "put", "path": "/api/v1/config/models" },
+
+    { "client": "EmbeddingsClient", "method": "post", "path": "/embeddings/compare" },
+
+    { "client": "IndexClient", "method": "post", "path": "/embeddings/index/runs" },
+    { "client": "IndexClient", "method": "get",  "path": "/embeddings/index/jobs/{job_id}" },
+    { "client": "IndexClient", "method": "get",  "path": "/embeddings/index/stats" },
+
+    { "client": "IngestionClient", "method": "post", "path": "/api/v1/ingestion/runs" },
+    { "client": "IngestionClient", "method": "get",  "path": "/api/v1/ingestion/jobs/{job_id}" },
+
+    { "client": "RagEstimateClient", "method": "post", "path": "/v1/estimate/from-transcript" },
+    { "client": "RagEstimateClient", "method": "post", "path": "/v1/estimate/stages/reformulate" },
+    { "client": "RagEstimateClient", "method": "post", "path": "/v1/estimate/stages/structure" },
+    { "client": "RagEstimateClient", "method": "post", "path": "/v1/estimate/stages/generate" },
+    { "client": "RagEstimateClient", "method": "post", "path": "/v1/estimate/tasks/hours" },
+    { "client": "RagEstimateClient", "method": "post", "path": "/v1/estimate/agent/structure" },
+    { "client": "RagEstimateClient", "method": "post", "path": "/v1/estimate/agent/hours" },
+    { "client": "RagEstimateClient", "method": "post", "path": "/v1/estimate/graph" },
+    { "client": "RagEstimateClient", "method": "post", "path": "/v1/estimate/graph/stream" },
+    { "client": "RagEstimateClient", "method": "post", "path": "/v1/estimate/graph/{estimation_id}/resume" },
+    { "client": "RagEstimateClient", "method": "post", "path": "/v1/estimate/graph/{estimation_id}/resume-stream" },
+    { "client": "RagEstimateClient", "method": "get",  "path": "/v1/estimate/graph/{estimation_id}/state" },
+    { "client": "RagEstimateClient", "method": "get",  "path": "/v1/estimate/graph/{estimation_id}/progress" },
+    { "client": "RagEstimateClient", "method": "post", "path": "/v1/estimate/graph/{estimation_id}/proposal" },
+    { "client": "RagEstimateClient", "method": "post", "path": "/v1/estimate/supervisor" },
+    { "client": "RagEstimateClient", "method": "post", "path": "/v1/estimate/supervisor/{estimation_id}/resume" },
+    { "client": "RagEstimateClient", "method": "get",  "path": "/v1/estimate/supervisor/{estimation_id}/state" }
+  ],
+  "probes": [
+    { "consumer": "docker HEALTHCHECK / compose depends_on", "method": "get", "path": "/health", "unauthenticated": true },
+    { "consumer": "PaaS readiness probe",                    "method": "get", "path": "/health/ready", "unauthenticated": true }
+  ]
+}

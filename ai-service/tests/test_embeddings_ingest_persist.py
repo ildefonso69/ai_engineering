@@ -123,12 +123,13 @@ def test_ingest_duplicate_returns_409_with_literal_shape():
     assert response.json() == {"detail": "Document already ingested", "document_id": 42}
 
 
-def test_ingest_service_unavailable_returns_500():
+def test_ingest_service_unavailable_returns_503():
+    # Session 15: unavailable dependency → 503 (see test_search_endpoint).
     app.dependency_overrides[get_rag_ingest_service] = lambda: None
 
     response = TestClient(app).post("/embeddings/ingest", json=make_ingest_payload())
 
-    assert response.status_code == 500
+    assert response.status_code == 503
     assert response.json()["detail"] == "Embedding service is not available."
 
 

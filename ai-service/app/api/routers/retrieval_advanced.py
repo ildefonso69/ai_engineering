@@ -97,7 +97,7 @@ async def advanced_search(
     embedder = get_embedder()
     if embedder is None:
         log.error("advanced_retrieval_failed", reason="embedder_unavailable")
-        raise HTTPException(status_code=500, detail="Embedding service is not available.")
+        raise HTTPException(status_code=503, detail="Embedding service is not available.")
 
     settings = get_settings()
     runtime = get_runtime_retrieval_config()
@@ -146,7 +146,11 @@ async def advanced_search(
             reference_date=datetime.now().date(),
         )
     except RetrievalError as exc:
-        raise HTTPException(status_code=502, detail="Retrieval failed.") from exc
+        # 503, not 502: RetrievalError means the vector store could not be
+        # queried at all (connection/DB failure), which is an unavailable
+        # dependency. A 502 would say "the upstream answered badly" and would
+        # tell the caller to give up instead of to retry.
+        raise HTTPException(status_code=503, detail="Retrieval failed.") from exc
     except Exception as exc:  # noqa: BLE001
         log.error(
             "advanced_retrieval_failed",

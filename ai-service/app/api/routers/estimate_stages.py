@@ -98,7 +98,7 @@ async def retrieve(request: Request, payload: RetrievalRequest) -> RetrievalResu
     embedder = get_embedder()
     if embedder is None:
         log.error("stage_failed", stage="retrieval", reason="embedder_unavailable")
-        raise HTTPException(status_code=500, detail="Embedding service is not available.")
+        raise HTTPException(status_code=503, detail="Embedding service is not available.")
 
     try:
         with log_stage("retrieval", request_id, sectors=payload.sectors):
@@ -113,7 +113,11 @@ async def retrieve(request: Request, payload: RetrievalRequest) -> RetrievalResu
                 chunk_types=payload.chunk_types,
             )
     except RetrievalError as exc:
-        raise HTTPException(status_code=502, detail="Retrieval failed.") from exc
+        # 503, not 502: RetrievalError means the vector store could not be
+        # queried at all (connection/DB failure), which is an unavailable
+        # dependency. A 502 would say "the upstream answered badly" and would
+        # tell the caller to give up instead of to retry.
+        raise HTTPException(status_code=503, detail="Retrieval failed.") from exc
     except Exception as exc:  # noqa: BLE001 — embedding/other failures → 502.
         log.error("stage_failed", stage="retrieval", error_type=type(exc).__name__)
         raise HTTPException(status_code=502, detail="Failed to run retrieval.") from exc

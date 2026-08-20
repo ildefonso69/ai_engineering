@@ -1,0 +1,26 @@
+# FAILURE MODE 3 — the AI service is unreachable from the business backend.
+#
+# Symptom: the page renders, but every estimation fails with
+#   Faraday::ConnectionFailed: Failed to open TCP connection to localhost:8000
+# even though `curl http://localhost:8000/health` works fine FROM THE HOST.
+#
+# Cause: inside a container, `localhost` is THAT CONTAINER. The Rails container
+# is asking itself for port 8000, where nothing is listening. Compose provides
+# DNS by service name; that is the address to use.
+#
+# This is the single most common networking mistake in the exercise, and it gets
+# worse in the cloud: on the EC2 instance nothing is published to the host, so
+# there is no `localhost` shortcut to accidentally fall back on.
+#
+# Fix: http://ai-service:8000 — the service name, not localhost.
+services:
+  business-backend:
+    build: ./business-backend
+    ports:
+      - "3000:3000"
+    environment:
+      # BROKEN: inside the container this points at the container itself
+      ESTIMATOR_API_BASE_URL: http://localhost:8000
+
+  ai-service:
+    build: ./ai-service

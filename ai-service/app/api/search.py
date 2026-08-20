@@ -28,7 +28,7 @@ async def search(
     if retriever is None:
         # No OPENAI_API_KEY configured. Generic message to the client, detail logged.
         log.error("search_failed", reason="retriever_unavailable")
-        raise HTTPException(status_code=500, detail="Embedding service is not available.")
+        raise HTTPException(status_code=503, detail="Embedding service is not available.")
 
     try:
         return await retriever.search(query=request.query, k=request.k)

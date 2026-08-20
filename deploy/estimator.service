@@ -1,0 +1,47 @@
+# Session 15 — the stack as a systemd service.
+#
+# This is what replaces "the platform restarts it for you". Without it, a reboot
+# (scheduled, or an AWS host retirement) leaves the system down until a human
+# notices. With it, "arranca solo" stops being a property of your laptop and
+# becomes a property of the deployment.
+#
+# Install:
+#   sudo cp deploy/estimator.service /etc/systemd/system/
+#   sudo systemctl daemon-reload && sudo systemctl enable --now estimator
+#
+# Operate:
+#   sudo systemctl status estimator
+#   sudo systemctl restart estimator
+#   journalctl -u estimator -f
+
+[Unit]
+Description=Estimator — business backend, AI service and datastores
+Requires=docker.service
+After=docker.service network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+WorkingDirectory=/opt/estimator
+
+# COMPOSE_PROJECT_NAME is load-bearing, not cosmetic. Compose derives volume
+# names from the project name, which defaults to the directory name. If this
+# box ever runs compose from a differently-named path, `estimator_postgres_data`
+# resolves to a DIFFERENT, EMPTY volume — the corpus silently disappears and the
+# embeddings have to be paid for again. Pinning it makes the volume identity
+# independent of where the repo happens to live.
+Environment=COMPOSE_PROJECT_NAME=estimator
+
+# The production override is not optional here: without it the AI service and
+# the business backend would try to `build:` instead of pulling from GHCR, and
+# Rails would publish port 3000 to the host, bypassing Caddy.
+ExecStart=/usr/bin/docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --remove-orphans
+ExecStop=/usr/bin/docker compose -f docker-compose.yml -f docker-compose.prod.yml down
+
+# Pulling ~7.4 GB of images on a cold box takes minutes; the default 90 s would
+# mark the unit failed halfway through the first start.
+TimeoutStartSec=900
+
+[Install]
+WantedBy=multi-user.target
