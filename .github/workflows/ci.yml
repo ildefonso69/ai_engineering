@@ -347,7 +347,13 @@ jobs:
   deploy:
     name: Deploy to EC2
     needs: build
-    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    # Gated on a repository VARIABLE, not on editing this file: para activarlo,
+    # define vars.CD_ENABLED = true en Settings > Variables. Requisitos previos:
+    #   1. secretos EC2_HOST / EC2_USER / EC2_SSH_KEY
+    #   2. variable APP_DOMAIN
+    #   3. /opt/estimator TIENE que ser un clon de git (el script hace git fetch);
+    #      hoy sus ficheros llegaron por scp, así que este job fallaría.
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push' && vars.CD_ENABLED == 'true'
     runs-on: ubuntu-latest
     environment: production
 
