@@ -334,3 +334,97 @@ class RuntimeRetrievalConfig:
                 "overridden": SYNTHESIS_KEY in overrides,
             },
         }
+
+
+# ---------------------------------------------------------------------------
+# Session 16 — A/B rollout percentage, movable while traffic flows
+# ---------------------------------------------------------------------------
+
+AB_HASH_KEY = "estimator:runtime_ab"
+AB_PERCENT_KEY = "AB_VARIANT_B_PERCENT"
+AB_ENABLED_KEY = "AB_TESTING_ENABLED"
+
+
+class RuntimeABConfig:
+    """Redis-backed override store for the A/B rollout.
+
+    Same shape as :class:`RuntimeRetrievalConfig` — reads degrade to the settings
+    default when Redis is down, writes re-raise so a failed override is visible.
+
+    The percentage is runtime-overridable because that is the entire point of a
+    percentage rollout: you start at 5, watch the metrics, and move it. A split
+    that needs a redeploy to change is not an experiment, it is two deployments.
+
+    Degrading to the DEFAULT rather than to B is the safe direction: if Redis
+    disappears mid-experiment the system falls back to the configured split, and
+    with the default of 0 that means everyone gets the variant already known to
+    work.
+    """
+
+    def __init__(self, redis_client: redis.Redis, settings: Settings) -> None:
+        self._redis = redis_client
+        self._settings = settings
+
+    @classmethod
+    def from_url(cls, url: str, settings: Settings) -> "RuntimeABConfig":
+        return cls(redis.from_url(url, decode_responses=True), settings)
+
+    def _get_raw(self, key: str) -> str | None:
+        try:
+            return self._redis.hget(AB_HASH_KEY, key)
+        except redis.RedisError as exc:
+            log.warning("runtime_ab_read_failed", key=key, error=str(exc)[:200])
+            return None
+
+    def _set_raw(self, key: str, value: str | None) -> None:
+        try:
+            if value is None:
+                self._redis.hdel(AB_HASH_KEY, key)
+            else:
+                self._redis.hset(AB_HASH_KEY, key, value)
+        except redis.RedisError as exc:
+            raise RuntimeConfigUnavailable(str(exc)) from exc
+
+    def effective_enabled(self) -> bool:
+        override = self._get_raw(AB_ENABLED_KEY)
+        if override is None:
+            return self._settings.AB_TESTING_ENABLED
+        return override.lower() == "true"
+
+    def effective_percent(self) -> int:
+        override = self._get_raw(AB_PERCENT_KEY)
+        if override is None:
+            return self._settings.AB_VARIANT_B_PERCENT
+        try:
+            # Clamped, not rejected: a stray 250 in Redis must not make the
+            # service unserviceable, and 100 is a meaningful answer to it.
+            return max(0, min(100, int(override)))
+        except ValueError:
+            log.warning("runtime_ab_percent_invalid", value=override[:20])
+            return self._settings.AB_VARIANT_B_PERCENT
+
+    def set_enabled(self, value: bool | None) -> None:
+        self._set_raw(AB_ENABLED_KEY, None if value is None else str(bool(value)).lower())
+
+    def set_percent(self, value: int | None) -> None:
+        if value is not None and not 0 <= value <= 100:
+            raise ValueError("percent must be between 0 and 100")
+        self._set_raw(AB_PERCENT_KEY, None if value is None else str(int(value)))
+
+    def snapshot(self) -> dict:
+        try:
+            overrides = self._redis.hgetall(AB_HASH_KEY) or {}
+        except redis.RedisError:
+            overrides = {}
+        return {
+            AB_ENABLED_KEY: {
+                "effective": self.effective_enabled(),
+                "default": self._settings.AB_TESTING_ENABLED,
+                "overridden": AB_ENABLED_KEY in overrides,
+            },
+            AB_PERCENT_KEY: {
+                "effective": self.effective_percent(),
+                "default": self._settings.AB_VARIANT_B_PERCENT,
+                "overridden": AB_PERCENT_KEY in overrides,
+            },
+        }

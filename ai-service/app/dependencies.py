@@ -29,7 +29,12 @@ from app.ingestion.parsers.registry import ParserRegistry, default_registry
 from app.generation.cag.exact import EstimationCache
 from app.domain.estimation_service import EstimationService
 from app.domain.graph.activity import GraphActivityLog
-from app.foundation.llm.runtime_config import RuntimeModelConfig, RuntimeRetrievalConfig
+from app.foundation.llm.runtime_config import (
+    RuntimeABConfig,
+    RuntimeModelConfig,
+    RuntimeRetrievalConfig,
+)
+from app.generation.rag.embedding.cache import EmbeddingCache
 from app.foundation.llm.wrapper import LLMWrapper
 from app.foundation.persistence.database import get_async_session_factory
 from app.generation.rag.index_service import CorpusIndexService
@@ -69,6 +74,27 @@ def get_graph_activity() -> GraphActivityLog:
 
 
 @lru_cache
+def get_runtime_ab_config() -> RuntimeABConfig:
+    """Redis-backed A/B rollout percentage, read per call.
+
+    Not ``@lru_cache``d, and that is the point: the percentage is meant to move
+    while traffic flows, so it is read fresh on every request.
+    """
+    settings = get_settings()
+    return RuntimeABConfig.from_url(settings.REDIS_URL, settings)
+
+
+@lru_cache
+def get_embedding_cache() -> EmbeddingCache:
+    """Read-through cache for query embeddings (Session 16).
+
+    Cached at the dependency level because the client is a connection pool, not
+    state: one per process is right, and the cache's own contents live in Redis.
+    """
+    settings = get_settings()
+    return EmbeddingCache.from_url(settings.REDIS_URL, settings.EMBEDDING_CACHE_TTL)
+
+
 def get_runtime_retrieval_config() -> RuntimeRetrievalConfig:
     """Redis-backed override store for the Session 10 retrieval toggles
     (search mode + reranking), read per call so a flip in the Ajustes UI takes

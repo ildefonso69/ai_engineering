@@ -1,0 +1,154 @@
+# =============================================================================
+# Proyecto 2 — Model evaluation (Session 16)
+# =============================================================================
+# THE OTHER PIPELINE. `ci.yml` tests OUR CODE and doubles the model; this one
+# evaluates THE MODEL and calls it for real. They are separate files because they
+# are separate things, with different cadences and different failure meanings:
+#
+#              ci.yml                        eval.yml
+#   runs       every commit                  nightly + on demand
+#   model      mocked, always                real, always
+#   cost       zero                          a couple of dollars a run
+#   a failure  "you broke the code"          "the system got worse"
+#
+# Putting the second inside the first is the mistake this split exists to
+# prevent: an ordinary commit would then wait minutes, cost money and fail
+# non-deterministically, and within a week somebody would add `continue-on-error`
+# and nobody would ever look at it again.
+#
+# WHERE IT RUNS, AND WHY IT LOOKS ODD. Since Session 15 the AI service publishes
+# no ports: from outside, only the business backend is reachable. So the harness
+# cannot be pointed at the service from a GitHub runner — it is carried INTO the
+# perimeter and executed there. That is the deployment boundary doing its job,
+# not an obstacle to route around.
+#
+# The golden set travels from THIS COMMIT rather than from the deployed image, on
+# purpose: the measuring stick belongs to the code under evaluation. Adding a case
+# must not require a redeploy before it can measure anything.
+#
+# NOTE WHAT IS NOT HERE: an OPENAI_API_KEY. The evaluation spends the deployed
+# system's own credentials, inside the deployed system. CI never holds a real
+# model key, in either file.
+# =============================================================================
+
+name: Evaluation
+
+on:
+  workflow_dispatch:
+    inputs:
+      variant:
+        description: "A/B arm to evaluate (a, b, or empty for the configured split)"
+        required: false
+        default: ""
+      promote_baseline:
+        description: "Promote this run to the baseline if the gate passes"
+        type: boolean
+        default: false
+  schedule:
+    # 03:00 UTC. Nightly, because quality drifts with the provider even when
+    # nobody touches the code — a model update is a change you did not make and
+    # cannot see in a diff.
+    - cron: "0 3 * * *"
+
+permissions:
+  contents: read
+
+concurrency:
+  # Never two evaluations at once: they would race on the same deployed system
+  # and each would measure the other's load as its own latency.
+  group: eval
+  cancel-in-progress: false
+
+jobs:
+  evaluate:
+    name: Golden set against the deployed system
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Ship the golden set and the harness
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ secrets.EC2_HOST }}
+          username: ${{ secrets.EC2_USER }}
+          key: ${{ secrets.EC2_SSH_KEY }}
+          source: "ai-service/eval/*"
+          target: /tmp/eval-run
+          overwrite: true
+
+      - name: Run the golden set inside the perimeter
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.EC2_HOST }}
+          username: ${{ secrets.EC2_USER }}
+          key: ${{ secrets.EC2_SSH_KEY }}
+          # Six cases against a reasoning model take 1-3 minutes each.
+          command_timeout: 40m
+          script: |
+            set -euo pipefail
+            cd /opt/estimator
+            CO="docker compose -f docker-compose.yml -f docker-compose.prod.yml"
+
+            docker cp /tmp/eval-run/ai-service/eval ai-service:/app/eval
+            rm -rf /tmp/eval-reports && mkdir -p /tmp/eval-reports
+
+            VARIANT_FLAG=""
+            if [ -n "${{ inputs.variant }}" ]; then
+              VARIANT_FLAG="--variant ${{ inputs.variant }}"
+            fi
+
+            # `|| true`: a failing case must not stop the run before the report is
+            # written. The gate below decides what a failure means; this step only
+            # has to produce the numbers.
+            $CO exec -T ai-service python /app/eval/run_eval.py \
+              --base-url http://localhost:8000 \
+              --out /tmp/reports $VARIANT_FLAG || true
+
+            docker cp ai-service:/tmp/reports/. /tmp/eval-reports/
+            ls -la /tmp/eval-reports/
+
+      - name: Bring the report back
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ secrets.EC2_HOST }}
+          username: ${{ secrets.EC2_USER }}
+          key: ${{ secrets.EC2_SSH_KEY }}
+          source: "/tmp/eval-reports/*"
+          target: ai-service/eval/reports
+          strip_components: 2
+          # Pull, not push.
+          direction: download
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+
+      # THE GATE. Compares this run against eval/baseline.json and fails on a
+      # quality drop beyond tolerance. This is the LLMOps equivalent of a failing
+      # unit test — and unlike the steps above it is deterministic, because it is
+      # arithmetic over two JSON files.
+      - name: Regression gate
+        working-directory: ai-service
+        run: uv run --no-project python eval/compare_against_baseline.py
+
+      # Always, gate or no gate: a run that regressed is the one whose numbers you
+      # most want to keep.
+      - name: Publish the report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: eval-report-${{ github.run_number }}
+          path: ai-service/eval/reports/
+          retention-days: 90
+
+      - name: Promote to baseline
+        if: ${{ success() && inputs.promote_baseline }}
+        working-directory: ai-service
+        run: |
+          # Prints what WOULD become the reference. Committing it stays a human
+          # act on a branch, deliberately: a pipeline that moves its own baseline
+          # certifies whatever it happens to produce.
+          uv run --no-project python eval/promote_baseline.py \
+            --report "$(ls -t eval/reports/report-*.json | head -1)" \
+            --note "Promoted from Evaluation run ${{ github.run_number }}"
+          cat eval/baseline.json

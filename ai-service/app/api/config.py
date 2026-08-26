@@ -13,7 +13,11 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
 from app.config import Settings, get_settings
-from app.dependencies import get_runtime_config, get_runtime_retrieval_config
+from app.dependencies import (
+    get_runtime_ab_config,
+    get_runtime_config,
+    get_runtime_retrieval_config,
+)
 from app.foundation.llm.runtime_config import (
     AUGMENTATION_KEY,
     HALLUCINATION_GATE_KEY,
@@ -22,6 +26,7 @@ from app.foundation.llm.runtime_config import (
     ROUTING_KEY,
     SYNTHESIS_KEY,
     TEMPORAL_DECAY_KEY,
+    RuntimeABConfig,
     RuntimeConfigUnavailable,
     RuntimeModelConfig,
     RuntimeRetrievalConfig,
@@ -231,3 +236,55 @@ def update_models(
         raise HTTPException(status_code=503, detail="Runtime config store unavailable") from exc
 
     return _config_payload(runtime_config, settings)
+
+
+# ---------------------------------------------------------------------------
+# Session 16 — the A/B rollout percentage
+# ---------------------------------------------------------------------------
+
+
+class ABUpdateRequest(BaseModel):
+    """Partial update of the A/B split. ``null`` resets a knob to its .env default."""
+
+    enabled: bool | None = Field(default=None, description="Run the A/B split at all.")
+    percent_b: int | None = Field(
+        default=None, ge=0, le=100, description="Share of traffic served by variant B (0-100)."
+    )
+
+
+@router.get("/ab")
+def read_ab(
+    runtime_ab: RuntimeABConfig = Depends(get_runtime_ab_config),
+) -> dict:
+    """Current split, with each knob's effective value, default and override flag."""
+    return {"ab": runtime_ab.snapshot()}
+
+
+@router.put("/ab")
+def update_ab(
+    request: ABUpdateRequest,
+    runtime_ab: RuntimeABConfig = Depends(get_runtime_ab_config),
+) -> dict:
+    """Move the A/B split at runtime — effective on the next request, no restart.
+
+    Runtime rather than .env because a percentage rollout you cannot move while
+    traffic flows is not an experiment, it is two deployments. The usual shape is
+    5% → look at the metrics → 25% → look again, and each of those steps has to
+    take seconds.
+    """
+    sent = request.model_fields_set
+    try:
+        if "enabled" in sent:
+            runtime_ab.set_enabled(request.enabled)
+            log.info("runtime_ab_changed", key="enabled", new_value=request.enabled)
+        if "percent_b" in sent:
+            try:
+                runtime_ab.set_percent(request.percent_b)
+            except ValueError as exc:
+                raise HTTPException(status_code=422, detail=str(exc)) from exc
+            log.info("runtime_ab_changed", key="percent_b", new_value=request.percent_b)
+    except RuntimeConfigUnavailable as exc:
+        log.error("runtime_ab_write_failed", error=str(exc)[:200])
+        raise HTTPException(status_code=503, detail="Runtime config store unavailable") from exc
+
+    return {"ab": runtime_ab.snapshot()}

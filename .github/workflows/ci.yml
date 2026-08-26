@@ -474,38 +474,21 @@ jobs:
             --timeout 180
 
   # ===========================================================================
-  # TODO(S16) — LLMOps stages plug in HERE
   # ===========================================================================
-  # Session 16 adds model-quality gates. They are deliberately NOT part of the
-  # jobs above, because they call the real model: they are slow, they cost money
-  # and they are non-deterministic, so they must never gate an ordinary commit.
+  # Session 16 — LLMOps plugged in HERE (and deliberately not here)
+  # ===========================================================================
+  # The hook this file reserved is filled, and the answer turned out to be "a
+  # different file": `.github/workflows/eval.yml`.
   #
-  # The shape they will take:
+  # The reasoning is the one written at the top of this file, rule 1. Evaluating
+  # model QUALITY calls the real model, so it is slow, costs money and is
+  # non-deterministic. As a job in this pipeline it would make every ordinary
+  # commit wait minutes and fail for reasons unrelated to the diff — and within a
+  # week somebody would add `continue-on-error` and nobody would look at it again.
   #
-  # evaluate-golden-set:
-  #   name: Evaluate golden set
-  #   needs: build
-  #   # Not on every commit: nightly, or on demand, or only when prompts change.
-  #   if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
-  #   runs-on: ubuntu-latest
-  #   steps:
-  #     - run: uv run python scripts/eval_retrieval_s10.py --config baseline
-  #     - run: uv run python scripts/eval_generation_s11.py
-  #     # Real OPENAI_API_KEY from the secret manager — the one place CI uses one.
+  #     ci.yml    every commit · model mocked · a failure means "you broke the code"
+  #     eval.yml  nightly + on demand · model real · "the system got worse"
   #
-  # regression-gate:
-  #   name: Regression gate
-  #   needs: evaluate-golden-set
-  #   runs-on: ubuntu-latest
-  #   steps:
-  #     # Compare this run's scores against the stored baseline and fail if
-  #     # quality dropped more than the tolerated delta. This is the LLMOps
-  #     # equivalent of a failing unit test.
-  #     - run: uv run python scripts/compare_against_baseline.py --max-regression 0.05
-  #
-  # ab-test:
-  #   name: A/B prompt comparison
-  #   needs: evaluate-golden-set
-  #   # Two prompt versions over the same golden set; the winner gets promoted.
-  #   ...
+  # Two pipelines, two cadences, two meanings of red. What Session 16 added to
+  # THIS file is nothing at all, and that is the point: the seam held.
   # ===========================================================================

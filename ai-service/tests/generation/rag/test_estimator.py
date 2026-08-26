@@ -23,7 +23,23 @@ from app.generation.rag.schemas import (
     WorkModule,
 )
 
-_SETTINGS = SimpleNamespace(
+def _settings(**overrides) -> SimpleNamespace:
+    """Real Settings defaults, with only what this file cares about pinned.
+
+    Built from ``Settings`` rather than hand-listed. A hand-written namespace goes
+    stale the moment anyone adds a knob — three separate test files broke that way
+    while Session 16 was being written, each with an AttributeError pointing at the
+    pipeline instead of at the fake. Deriving from the real defaults means a new
+    setting arrives here already correct.
+    """
+    from app.config import Settings
+
+    base = Settings(OPENAI_API_KEY="sk-test-not-a-real-key").model_dump()
+    base.update(overrides)
+    return SimpleNamespace(**base)
+
+
+_SETTINGS = _settings(
     REFORMULATION_MODEL="gpt-5-mini",
     GENERATION_MODEL="gpt-5",
     GENERATION_REASONING_EFFORT="high",
@@ -34,14 +50,11 @@ _SETTINGS = SimpleNamespace(
     RETRIEVAL_RECALL_TOP_K=50,
     RERANK_TOP_N=5,
     RRF_K=60,
-    # Session 16 guardrails. Off in this file on purpose: these tests are about
-    # the ORCHESTRATION (which stages run, in which order, what short-circuits),
-    # and the guardrails have their own suite in test_guardrails_s16.py. Leaving
-    # them on here would make an unrelated stage failure look like a pipeline bug.
+    # Guardrails off by default here: this file is about ORCHESTRATION — which
+    # stages run, in which order, what short-circuits. The guardrails have their
+    # own suite, and the three tests at the bottom turn them back on.
     RAG_INPUT_GUARDRAILS_ENABLED=False,
     ESTIMATE_BOUNDS_ENABLED=False,
-    ESTIMATE_MAX_EVIDENCE_RATIO=3.0,
-    ESTIMATE_MAX_ENGINEER_DAYS=2500,
 )
 
 
@@ -117,7 +130,9 @@ def wire(monkeypatch):
             calls["search"] += 1
             return retrieval
 
-        async def fake_generate(context_block, structured_query):
+        # **kwargs so a new generation argument (S16 added the A/B plan) does not
+        # break every orchestration test.
+        async def fake_generate(context_block, structured_query, **kwargs):
             calls["generate"] += 1
             return estimate
 
@@ -221,10 +236,7 @@ async def test_idempotency_hit_short_circuits_pipeline(wire):
 
 def _guarded_settings(**overrides):
     values = dict(_SETTINGS.__dict__)
-    values.update(
-        RAG_INPUT_GUARDRAILS_ENABLED=True,
-        ESTIMATE_BOUNDS_ENABLED=True,
-    )
+    values.update(RAG_INPUT_GUARDRAILS_ENABLED=True, ESTIMATE_BOUNDS_ENABLED=True)
     values.update(overrides)
     return SimpleNamespace(**values)
 

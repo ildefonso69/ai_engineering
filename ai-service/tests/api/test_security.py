@@ -30,7 +30,9 @@ def stub(monkeypatch):
     async def fake_retrieve(**kwargs):
         return RetrievalResult(chunks=[], low_confidence=True, candidates_evaluated=0)
 
-    async def fake_estimate(transcript, idempotency_key=None):
+    # **kwargs so a new router-level argument (S16 added forced_variant)
+    # does not break every transport test that only cares about auth.
+    async def fake_estimate(transcript, idempotency_key=None, **kwargs):
         return Estimate(
             confidence="insufficient",
             reasoning="stub",

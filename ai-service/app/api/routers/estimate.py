@@ -25,6 +25,8 @@ from app.generation.rag.schemas import Estimate, EstimateRequest
 
 log = structlog.get_logger()
 
+VARIANT_HEADER = "X-Variant"
+
 router = APIRouter(prefix="/v1/estimate", tags=["estimate"])
 
 
@@ -35,11 +37,25 @@ router = APIRouter(prefix="/v1/estimate", tags=["estimate"])
 )
 @limiter.limit("10/minute")
 async def from_transcript(request: Request, payload: EstimateRequest) -> Estimate:
-    """Produce a grounded estimate from a raw transcript (idempotent on key)."""
+    """Produce a grounded estimate from a raw transcript (idempotent on key).
+
+    ``X-Variant: a|b`` forces an A/B arm. That header is for the demo and for
+    debugging one arm on purpose; ordinary traffic is split by the configured
+    percentage, and forced requests are labelled so they can be excluded from the
+    comparison. A caller who could silently pick their own arm would make the
+    experiment measure self-selection instead of the change.
+    """
+    forced = request.headers.get(VARIANT_HEADER, "").strip().lower() or None
+    if forced not in (None, "a", "b"):
+        raise HTTPException(
+            status_code=400,
+            detail={"reason": "invalid_variant", "message": f"{VARIANT_HEADER} must be 'a' or 'b'"},
+        )
     try:
         return await estimate_from_transcript(
             payload.transcript,
             idempotency_key=payload.idempotency_key,
+            forced_variant=forced,
         )
     except InputGuardrailViolation as exc:
         # 400, not 502: the request was refused, nothing upstream failed. The

@@ -25,7 +25,9 @@ from app.generation.rag.quality.augmentation import augment_chunks
 from app.generation.rag.quality.hallucination import gate_estimate
 from app.foundation.guardrails.input import check_input, find_pii
 from app.generation.rag.guardrails import bounds_for, review_reasons_for_estimate
+from app.foundation.observability.metrics import annotate
 from app.generation.rag.observability import log_stage
+from app.generation.rag.variants import VariantPlan, plan_for
 from app.generation.rag.prompt_builder import (
     build_structure_system_prompt,
     build_structure_user_message,
@@ -58,6 +60,7 @@ async def generate_estimate(
     structured_query: EstimationQuery,
     *,
     include_hours: bool = True,
+    plan: VariantPlan | None = None,
 ) -> Estimate:
     """Generate a grounded :class:`Estimate` from an assembled context block.
 
@@ -83,7 +86,9 @@ async def generate_estimate(
     GenerationError
         If the LLM call fails irrecoverably.
     """
-    return await _generate(context_block, structured_query, include_hours=include_hours)
+    return await _generate(
+        context_block, structured_query, include_hours=include_hours, plan=plan
+    )
 
 
 async def _generate(
@@ -92,8 +97,14 @@ async def _generate(
     *,
     feedback: str | None = None,
     include_hours: bool = True,
+    plan: VariantPlan | None = None,
 ) -> Estimate:
-    """Single generation call. ``feedback`` appends a correction note for retries."""
+    """Single generation call. ``feedback`` appends a correction note for retries.
+
+    ``plan`` is the A/B variant. Its overrides are read here rather than branched
+    on: variant B is "a different value for two arguments", which is why the two
+    arms cannot drift into two systems.
+    """
     from app.dependencies import get_llm_wrapper
 
     settings = get_settings()
@@ -109,8 +120,10 @@ async def _generate(
             system_prompt=build_system_prompt(include_hours=include_hours),
             user_message=user_message,
             response_model=Estimate,
-            model_override=settings.GENERATION_MODEL,
-            reasoning_effort=settings.GENERATION_REASONING_EFFORT,
+            model_override=(plan.generation_model if plan else None)
+            or settings.GENERATION_MODEL,
+            reasoning_effort=(plan.reasoning_effort if plan else None)
+            or settings.GENERATION_REASONING_EFFORT,
             # gpt-5 reasoning tokens count against max_tokens; the 4000 default
             # is exhausted by reasoning alone and truncates the JSON. See
             # Settings.GENERATION_MAX_TOKENS.
@@ -166,9 +179,34 @@ def _current_request_id() -> str:
     return bound or str(uuid4())
 
 
+def _embed_query(embedder, text: str, plan: VariantPlan) -> list[float]:
+    """Embed the search text, through the cache when the variant enables it.
+
+    Sync because the embedder is sync and this runs inside ``asyncio.to_thread``
+    already. A cache miss costs one extra Redis round trip on top of an API call
+    that takes two orders of magnitude longer, so the miss path is free in
+    practice — which is why this is read-through rather than something cleverer.
+    """
+    from app.dependencies import get_embedding_cache
+
+    if not plan.embedding_cache:
+        return embedder.embed_one(text)
+
+    cache = get_embedding_cache()
+    model = getattr(embedder, "_model", "unknown")
+    dimensions = getattr(embedder, "_dimensions", None)
+    cached = cache.get(text, model, dimensions)
+    if cached is not None:
+        return cached
+    vector = embedder.embed_one(text)
+    cache.set(text, model, dimensions, vector)
+    return vector
+
+
 async def estimate_from_transcript(
     transcript: str,
     idempotency_key: str | None = None,
+    forced_variant: str | None = None,
 ) -> Estimate:
     """Run the full transcript → grounded estimate pipeline.
 
@@ -200,6 +238,12 @@ async def estimate_from_transcript(
     settings = get_settings()
     request_id = _current_request_id()
     store = get_idempotency_store()
+
+    # Which version of the system serves this request. Resolved once, up front,
+    # and attached to the metric row so every number this request produces —
+    # latency, tokens, cost — can be sliced by arm without a join.
+    plan = plan_for(request_id, forced=forced_variant, settings=settings)
+    annotate(**plan.as_labels())
 
     if idempotency_key:
         cached = await asyncio.to_thread(store.get, idempotency_key)
@@ -245,7 +289,9 @@ async def estimate_from_transcript(
         embedder = get_embedder()
         if embedder is None:
             raise GenerationError("Embedding service is not available (no OpenAI key).")
-        query_embedding = await asyncio.to_thread(embedder.embed_one, search_text)
+        query_embedding = await asyncio.to_thread(
+            _embed_query, embedder, search_text, plan
+        )
 
     # 3. Metadata-filtered retrieval with soft-fail. Search mode + reranking
     #    follow the runtime/settings defaults (Session 10), so the grounded
@@ -280,6 +326,10 @@ async def estimate_from_transcript(
         estimate = _insufficient(
             "No historical budgets crossed the relevance threshold for this project."
         )
+        # Label it here too: this early return is the MOST common abstention, and
+        # a rate computed only from the path below would report near zero while
+        # the system declines all day.
+        annotate(abstained=True)
         if idempotency_key:
             await asyncio.to_thread(store.set, idempotency_key, estimate)
         return estimate
@@ -299,7 +349,9 @@ async def estimate_from_transcript(
 
     # 5. Generate the grounded estimate.
     with log_stage("generation", request_id, sources=len(kept)):
-        estimate = await generate_estimate(context_block, structured_query=query)
+        estimate = await generate_estimate(
+            context_block, structured_query=query, plan=plan
+        )
 
     # 6. Verify per-line citations; one corrective retry on dangling ids.
     retrieved_ids = {str(chunk.id) for chunk in kept}
@@ -322,7 +374,7 @@ async def estimate_from_transcript(
             "document_id and a verbatim evidence span for each."
         )
         with log_stage("citation_retry", request_id, dangling=report.dangling_citations):
-            estimate = await _generate(context_block, query, feedback=feedback)
+            estimate = await _generate(context_block, query, feedback=feedback, plan=plan)
         report = verify_citations(estimate, retrieved_ids)
         if report.has_dangling:
             log.warning(
@@ -364,7 +416,7 @@ async def estimate_from_transcript(
             "the modules, tasks and numbers."
         )
         with log_stage("coherence_repair", request_id):
-            estimate = await _generate(context_block, query, feedback=feedback)
+            estimate = await _generate(context_block, query, feedback=feedback, plan=plan)
         if not check_coherence(estimate):
             raise MalformedEstimateError(
                 "Estimate violates the insufficient-context coherence rule."
@@ -398,6 +450,8 @@ async def estimate_from_transcript(
             **verdict.as_dict(),
             requires_human_review=bool(reasons),
         )
+
+    annotate(abstained=estimate.confidence == "insufficient")
 
     # 8. Persist for idempotent retries.
     if idempotency_key:

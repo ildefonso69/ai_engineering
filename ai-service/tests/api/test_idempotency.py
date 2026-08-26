@@ -7,6 +7,8 @@ short-circuits the whole pipeline).
 
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 import pytest
 from fastapi.testclient import TestClient
 
@@ -36,21 +38,24 @@ def generate_calls(monkeypatch):
     calls = {"generate": 0}
     store = IdempotencyStore(redis_client=None, ttl=3600)  # in-memory backend
 
-    settings = type(
-        "S",
-        (),
-        {
-            "REFORMULATION_MODEL": "gpt-5-mini",
-            "GENERATION_MODEL": "gpt-5",
-            "GENERATION_REASONING_EFFORT": "medium",
-            "RETRIEVAL_TOP_K": 10,
-            "RETRIEVAL_DISTANCE_THRESHOLD": 0.6,
-            "MAX_CONTEXT_TOKENS": 100_000,
-            "RETRIEVAL_RECALL_TOP_K": 50,
-            "RERANK_TOP_N": 5,
-            "RRF_K": 60,
-        },
-    )()
+    from app.config import Settings
+
+    # Real defaults with only what this file pins. See the note in
+    # tests/generation/rag/test_estimator.py: hand-listed fakes go stale.
+    settings = SimpleNamespace(**{
+        **Settings(OPENAI_API_KEY="sk-test-not-a-real-key").model_dump(),
+        "REFORMULATION_MODEL": "gpt-5-mini",
+        "GENERATION_MODEL": "gpt-5",
+        "GENERATION_REASONING_EFFORT": "medium",
+        "RETRIEVAL_TOP_K": 10,
+        "RETRIEVAL_DISTANCE_THRESHOLD": 0.6,
+        "MAX_CONTEXT_TOKENS": 100_000,
+        "RETRIEVAL_RECALL_TOP_K": 50,
+        "RERANK_TOP_N": 5,
+        # This file is about idempotency; the guardrails have their own suite.
+        "RAG_INPUT_GUARDRAILS_ENABLED": False,
+        "ESTIMATE_BOUNDS_ENABLED": False,
+    })
 
     async def fake_reformulate(transcript):
         return EstimationQuery(function="ecommerce storefront", sector="ecommerce")
@@ -71,7 +76,7 @@ def generate_calls(monkeypatch):
             candidates_evaluated=5,
         )
 
-    async def fake_generate(context_block, structured_query):
+    async def fake_generate(context_block, structured_query, **kwargs):
         calls["generate"] += 1
         return Estimate(
             total_engineer_days=18,

@@ -26,7 +26,9 @@ def stub(monkeypatch):
         lambda: type("S", (), {"RETRIEVAL_API_KEY": "r", "ESTIMATE_API_KEY": _LIMIT_KEY})(),
     )
 
-    async def fake_estimate(transcript, idempotency_key=None):
+    # **kwargs so a new router-level argument (S16 added forced_variant)
+    # does not break every transport test that only cares about auth.
+    async def fake_estimate(transcript, idempotency_key=None, **kwargs):
         return Estimate(
             confidence="insufficient", reasoning="stub", insufficient_context_explanation="stub"
         )

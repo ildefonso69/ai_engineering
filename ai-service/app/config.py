@@ -349,6 +349,24 @@ class Settings(BaseSettings):
     # flagship endpoint with no input check at all.
     RAG_INPUT_GUARDRAILS_ENABLED: bool = True
 
+    # --- A/B testing (article 6) --------------------------------------------
+    # Variant A is the system as it stands. Variant B is the COST experiment:
+    # a small model for generation plus the embedding cache. Deliberately only
+    # cost — mixing a quality change into the same variant would make the result
+    # uninterpretable, and "which of my two changes won?" is unanswerable after
+    # the fact.
+    AB_TESTING_ENABLED: bool = False
+    # Share of traffic served by B, 0-100. Runtime-overridable via
+    # PUT /api/v1/config/ab, because the whole point of a percentage rollout is
+    # moving it while traffic flows.
+    AB_VARIANT_B_PERCENT: int = 0
+    AB_VARIANT_B_GENERATION_MODEL: str = "gpt-5-mini"
+    AB_VARIANT_B_REASONING_EFFORT: Literal["minimal", "low", "medium", "high"] = "medium"
+    # Embeddings are deterministic: the same text always produces the same vector,
+    # so re-paying for one is pure waste. Cached under sha256(text)+model.
+    EMBEDDING_CACHE_ENABLED: bool = False
+    EMBEDDING_CACHE_TTL: int = 604_800  # 7 days
+
     @model_validator(mode="after")
     def validate_at_least_one_api_key(self) -> "Settings":
         """LiteLLM may try either provider via fallback, so we require at least one key."""

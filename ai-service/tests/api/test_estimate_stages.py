@@ -347,7 +347,9 @@ def test_existing_endpoints_still_work(client, monkeypatch):
     import app.api.routers.estimate as estimate_router
     import app.api.routers.retrieval as retrieval_router
 
-    async def fake_estimate(transcript, idempotency_key=None):
+    # **kwargs so a new router-level argument (S16 added forced_variant)
+    # does not break every transport test that only cares about auth.
+    async def fake_estimate(transcript, idempotency_key=None, **kwargs):
         return Estimate(
             confidence="insufficient", reasoning="stub", insufficient_context_explanation="stub"
         )

@@ -25,11 +25,12 @@ the reason something fails.
 from __future__ import annotations
 
 import contextvars
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 __all__ = [
     "RequestMetrics",
+    "annotate",
     "begin_request",
     "current_metrics",
     "end_request",
@@ -50,6 +51,12 @@ class RequestMetrics:
     prompt_tokens: int = 0
     completion_tokens: int = 0
     cost_usd: float = 0.0
+    # Free-form dimensions the request can attach to its own metric row: which
+    # A/B variant served it, whether it abstained, anything a panel needs to slice
+    # by. A dict rather than named fields on purpose — the alternative is editing
+    # this foundation module, which every session depends on, each time somebody
+    # wants a new breakdown.
+    labels: dict[str, Any] = field(default_factory=dict)
 
     def add(self, *, tokens_in: int, tokens_out: int, cost_usd: float) -> None:
         self.llm_calls += 1
@@ -59,6 +66,7 @@ class RequestMetrics:
 
     def as_dict(self) -> dict[str, Any]:
         return {
+            **self.labels,
             "llm_calls": self.llm_calls,
             "prompt_tokens": self.prompt_tokens,
             "completion_tokens": self.completion_tokens,
@@ -98,3 +106,18 @@ def record_llm_call(*, tokens_in: int, tokens_out: int, cost_usd: float) -> None
     if metrics is None:
         return
     metrics.add(tokens_in=tokens_in, tokens_out=tokens_out, cost_usd=cost_usd)
+
+
+def annotate(**labels: Any) -> None:
+    """Attach dimensions to the metric row of the request in flight.
+
+    ``annotate(variant="b", abstained=False)`` puts those two keys on the
+    ``request_completed`` event, which is what lets the dashboard compare A
+    against B without a second event or a join.
+
+    No-op outside a request, like everything else here.
+    """
+    metrics = _current.get()
+    if metrics is None:
+        return
+    metrics.labels.update(labels)
