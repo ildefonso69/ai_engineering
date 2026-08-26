@@ -206,3 +206,79 @@ cruda, y un acumulador por petición en `app/foundation/observability/metrics.py
 Una tanda completa (6 casos, `gpt-5` con razonamiento alto) ronda **1–3 USD**. Es
 un gasto pequeño y deliberado: es el ejercicio. Cada caso tarda 1–3 minutos, de
 ahí que el arnés use un timeout de 600 s por petición.
+
+---
+
+## Hallazgos de la primera ejecución (26/08/2026)
+
+La primera tanda contra la instancia encontró **tres defectos de producción**, y
+ninguno de los tres era visible desde el smoke test. Vale la pena leerlos en orden,
+porque cada uno tapaba al siguiente.
+
+### 1. El modelo de fallback estaba mal escrito
+
+`FALLBACK_MODEL=claude-haiku-4-5-2025` en el `.env` de la instancia — truncado; el
+nombre real es `claude-haiku-4-5-20251001`. LiteLLM no resuelve el proveedor y
+revienta **al construir el `LLMWrapper`**, así que fallaba *cualquier* endpoint que
+llamara al modelo, con un 500 en 62 ms.
+
+Llevaba roto desde el despliegue. El smoke test seguía verde porque el badge del
+navbar consulta `/api/v1/config/models`, que no construye el wrapper.
+
+### 2. El `.env.example` de la raíz había perdido `LLM_TIMEOUT`
+
+Con el modelo arreglado, los cinco casos de estimación fallaban con un 502 tras
+**91 segundos** exactos. La aritmética lo delata: `LLM_TIMEOUT` no estaba en la
+plantilla de la raíz —la canónica para Docker desde la S15—, así que regía el
+default de `config.py`, que es **30**. Con `LLM_RETRIES=2` son 3 intentos × 30 s =
+90 s. Y la generación con `gpt-5`, esfuerzo alto y 64k de presupuesto tarda entre
+dos y tres minutos.
+
+30 s sobran para `gpt-4o-mini`; para un modelo de razonamiento son garantía de
+fallo. `ai-service/.env.example` sí decía 600: la consolidación de la S15 perdió
+la línea por el camino, y **ningún test lo detectó porque ningún test llama al
+modelo**.
+
+### 3. Lo de verdad interesante: la misma entrada da 566 o 82
+
+Ya con todo funcionando, los cinco casos quedaron 3-5× por encima de lo esperado,
+todos con `confidence: "low"`:
+
+| Caso | Estimado | Esperado | Rango aceptable |
+|---|---|---|---|
+| ecommerce checkout | 566 | 75 | 45–120 |
+| healthcare portal | 320 | 150 | 95–220 |
+| logistics fleet | 507 | 100 | 62–150 |
+| finance reporting | 347 | 90 | 55–140 |
+| multi-componente | 417 | 190 | 120–280 |
+
+`within_range_rate` **0%**, error medio **310 jornadas**. Pero una llamada
+posterior al **mismo** `case-001` devolvió **82 jornadas** — dentro del rango — con
+la conversión hecha correctamente línea a línea:
+
+```
+   5 d  Checkout flow orchestration     <- Estimated hours: 150
+   6 d  Card payments integration       <- Estimated hours: 110
+   2 d  Email provider integration      <- Estimated hours: 40
+```
+
+Misma entrada, 566 y 82. La causa está a la vista en
+`app/generation/rag/prompt_builder.py`: **el prompt nunca dice cuántas horas tiene
+una jornada.** Las fuentes hablan en `estimated_hours`, el campo del esquema se
+llama `engineer_days`, y la regla 2 incluso pide copiar *"the component name and
+its estimated hours"* como evidencia. La conversión queda implícita, así que a
+veces el modelo divide entre 8 y a veces no — y una distribución bimodal como esa
+es indistinguible de "el sistema estima alto" si solo miras una ejecución.
+
+**Deliberadamente sin arreglar.** Es el material del directo: una línea de prompt
+es justo el tipo de cambio que pide un A/B contra el golden set, y el número que
+decide cuál gana es `within_range_rate`.
+
+### Lo que sí funcionó
+
+- **La abstención, en las tres ejecuciones.** `case-006` nunca inventó una cifra:
+  `confidence: "insufficient"`, sin número. La propiedad de seguridad se sostiene.
+- **`citation_validity_rate` 100%.** Toda línea `grounded` citaba fuentes reales.
+  El sistema no alucina *fuentes*; se equivoca en las *unidades*.
+- **La latencia p95 es de 165 s**, muy por encima de los 180 s a los que Rails
+  cuelga la llamada. Sobre eso, [escalabilidad](scalability.md).

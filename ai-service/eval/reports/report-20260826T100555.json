@@ -1,0 +1,124 @@
+{
+  "started_at": "2026-08-26T10:05:55.907325+00:00",
+  "finished_at": "2026-08-26T10:18:44.461390+00:00",
+  "base_url": "http://localhost:8000",
+  "endpoint": "/v1/estimate/from-transcript",
+  "metrics": {
+    "within_range_rate": 0.0,
+    "mean_absolute_error": 310.4,
+    "abstention_correct": true,
+    "mean_latency_ms": 128044.83333333336,
+    "p95_latency_ms": 165402.6,
+    "citation_validity_rate": 1.0,
+    "cases_total": 6,
+    "cases_passed": 1
+  },
+  "cases": [
+    {
+      "id": "case-001-ecommerce-checkout",
+      "difficulty": "easy",
+      "status": 200,
+      "latency_ms": 135579.2,
+      "confidence": "low",
+      "type": "estimation",
+      "passed": false,
+      "predicted": 566,
+      "expected": 75,
+      "acceptable_range": [
+        45,
+        120
+      ],
+      "abs_error": 491,
+      "sources": 10,
+      "citation_validity": true,
+      "detail": "566 outside [45, 120]"
+    },
+    {
+      "id": "case-002-healthcare-patient-portal",
+      "difficulty": "medium",
+      "status": 200,
+      "latency_ms": 135927.3,
+      "confidence": "low",
+      "type": "estimation",
+      "passed": false,
+      "predicted": 320,
+      "expected": 150,
+      "acceptable_range": [
+        95,
+        220
+      ],
+      "abs_error": 170,
+      "sources": 8,
+      "citation_validity": true,
+      "detail": "320 outside [95, 220]"
+    },
+    {
+      "id": "case-003-logistics-fleet-telemetry",
+      "difficulty": "medium",
+      "status": 200,
+      "latency_ms": 165402.6,
+      "confidence": "low",
+      "type": "estimation",
+      "passed": false,
+      "predicted": 507,
+      "expected": 100,
+      "acceptable_range": [
+        62,
+        150
+      ],
+      "abs_error": 407,
+      "sources": 10,
+      "citation_validity": true,
+      "detail": "507 outside [62, 150]"
+    },
+    {
+      "id": "case-004-finance-regulatory-reporting",
+      "difficulty": "medium",
+      "status": 200,
+      "latency_ms": 149344.7,
+      "confidence": "low",
+      "type": "estimation",
+      "passed": false,
+      "predicted": 347,
+      "expected": 90,
+      "acceptable_range": [
+        55,
+        140
+      ],
+      "abs_error": 257,
+      "sources": 10,
+      "citation_validity": true,
+      "detail": "347 outside [55, 140]"
+    },
+    {
+      "id": "case-005-multi-component-edge",
+      "difficulty": "hard",
+      "status": 200,
+      "latency_ms": 152011.9,
+      "confidence": "low",
+      "type": "estimation",
+      "passed": false,
+      "predicted": 417,
+      "expected": 190,
+      "acceptable_range": [
+        120,
+        280
+      ],
+      "abs_error": 227,
+      "sources": 10,
+      "citation_validity": true,
+      "detail": "417 outside [120, 280]"
+    },
+    {
+      "id": "case-006-avionics-certification-no-precedent",
+      "difficulty": "abstention",
+      "status": 200,
+      "latency_ms": 30003.3,
+      "confidence": "insufficient",
+      "type": "abstention",
+      "passed": true,
+      "predicted": null,
+      "detail": "abstained correctly"
+    }
+  ]
+}
