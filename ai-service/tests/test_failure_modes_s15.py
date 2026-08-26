@@ -15,6 +15,8 @@ No Docker, no network, no YAML dependency beyond what ships with the suite.
 
 from __future__ import annotations
 
+import re
+
 from pathlib import Path
 
 import pytest
@@ -76,8 +78,16 @@ def test_broken_dockerfile_copies_source_before_installing_dependencies():
 def test_the_real_dockerfile_installs_dependencies_first():
     content = (SERVICE_ROOT / "Dockerfile").read_text()
     uv_sync = content.index("uv sync")
-    copy_app = content.index("COPY app/")
-    assert uv_sync < copy_app, "the real image must install dependencies before the source"
+    # Match the INSTRUCTION, not one exact spelling of it. `COPY` takes flags
+    # (`--chown`, `--chmod`, `--from`), and pinning the literal "COPY app/" made
+    # a correct Dockerfile change fail a test that is about layer ORDER and
+    # nothing else. The flag group is optional, and the source path must start
+    # with `app/` -- otherwise this also matches `COPY --from=builder /app/.venv`.
+    copy_app = re.search(r"^COPY\b(?:\s+--\S+)*\s+app/", content, re.MULTILINE)
+    assert copy_app, "the real Dockerfile must copy app/ into the image"
+    assert uv_sync < copy_app.start(), (
+        "the real image must install dependencies before the source"
+    )
     assert "uv.lock" in content
     # And its paths match the context compose actually gives it.
     copy_lines = [ln for ln in content.splitlines() if ln.startswith("COPY")]
