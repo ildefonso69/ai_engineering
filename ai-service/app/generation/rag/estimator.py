@@ -23,6 +23,8 @@ from app.generation.rag.context_assembler import build_context_block, truncate_t
 from app.generation.rag.errors import GenerationError, MalformedEstimateError
 from app.generation.rag.quality.augmentation import augment_chunks
 from app.generation.rag.quality.hallucination import gate_estimate
+from app.foundation.guardrails.input import check_input, find_pii
+from app.generation.rag.guardrails import bounds_for, review_reasons_for_estimate
 from app.generation.rag.observability import log_stage
 from app.generation.rag.prompt_builder import (
     build_structure_system_prompt,
@@ -205,6 +207,34 @@ async def estimate_from_transcript(
             log.info("idempotency_hit", request_id=request_id, idempotency_key=idempotency_key)
             return cached
 
+    # 0. Input guardrails (Session 16). FIRST, before a single token is spent.
+    #    These are the Session 4 checks — moderation, prompt injection, PII — and
+    #    until now they guarded only /api/v1/estimate. The endpoint that takes a
+    #    raw client transcript and hands it to a reasoning model had none, which
+    #    is the wrong way round: this is the input with the most attack surface
+    #    and the highest cost per call.
+    #
+    #    The policy is `exception`, deliberately: a rejected input must not reach
+    #    the model, so there is nothing to filter or re-prompt. The router turns
+    #    InputGuardrailViolation into a 400.
+    pii_kinds: list[str] = []
+    if settings.RAG_INPUT_GUARDRAILS_ENABLED:
+        with log_stage("input_guardrails", request_id):
+            from app.dependencies import get_openai_client
+
+            await asyncio.to_thread(
+                check_input,
+                transcript,
+                openai_client=get_openai_client(),
+                # PII is REPORTED here, not rejected — a real meeting transcript
+                # contains phone numbers and emails because people said them.
+                # It becomes a review reason instead. See check_input's docstring.
+                check_pii=False,
+            )
+            pii_kinds = find_pii(transcript)
+        if pii_kinds:
+            log.info("transcript_contains_pii", request_id=request_id, kinds=pii_kinds)
+
     # 1. Query understanding.
     with log_stage("reformulation", request_id):
         query = await reformulate_query(transcript)
@@ -339,6 +369,35 @@ async def estimate_from_transcript(
             raise MalformedEstimateError(
                 "Estimate violates the insufficient-context coherence rule."
             )
+
+    # 7.5 Output guardrail (Session 16): is this number defensible given the
+    #     evidence that produced it? Deterministic arithmetic, no model involved.
+    #
+    #     It does NOT reject. An implausible total is flagged for a person, with
+    #     the reason spelled out, and the estimate is still returned. Discarding
+    #     paid-for work because a threshold moved turns a quality problem into an
+    #     outage — and the threshold is the part most likely to be wrong at first.
+    #
+    #     Whatever the model may have put in these two fields is overwritten here.
+    if settings.ESTIMATE_BOUNDS_ENABLED:
+        with log_stage("bounds_guardrail", request_id):
+            verdict = bounds_for(estimate, kept, settings=settings)
+            reasons = review_reasons_for_estimate(estimate, verdict, settings=settings)
+            if pii_kinds:
+                reasons.append(
+                    "the transcript contains personal data ("
+                    + ", ".join(pii_kinds)
+                    + ") — check before sharing the estimate outside the team"
+                )
+        estimate = estimate.model_copy(
+            update={"requires_human_review": bool(reasons), "review_reasons": reasons}
+        )
+        log.info(
+            "bounds_guardrail",
+            request_id=request_id,
+            **verdict.as_dict(),
+            requires_human_review=bool(reasons),
+        )
 
     # 8. Persist for idempotent retries.
     if idempotency_key:

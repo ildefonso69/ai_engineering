@@ -36,8 +36,15 @@ class InputGuardrailViolation(Exception):
 # --- Prompt injection patterns ----------------------------------------------
 
 _PROMPT_INJECTION_PATTERNS: list[re.Pattern[str]] = [
+    # The qualifier repeats (1-3 words) because the single most common phrasing in
+    # the wild is "ignore ALL PREVIOUS instructions" — two qualifiers — and the
+    # original single-word version matched "ignore all instructions" while letting
+    # the textbook attack straight through. Found by a Session 16 test that used
+    # the real-world wording instead of a convenient one.
     re.compile(
-        r"ignore\s+(previous|prior|all|the)\s+(instructions?|prompts?|rules?)", re.IGNORECASE
+        r"ignore\s+(?:(?:previous|prior|all|the|above|earlier)\s+){1,3}"
+        r"(instructions?|prompts?|rules?)",
+        re.IGNORECASE,
     ),
     re.compile(r"</?\s*(system|instructions?|prompt)\s*>", re.IGNORECASE),
     re.compile(r"new\s+instructions?\s*[:.\-]", re.IGNORECASE),
@@ -58,17 +65,49 @@ _IBAN_RE = re.compile(r"\b[A-Z]{2}\d{2}[A-Z0-9]{10,30}\b")
 _PHONE_RE = re.compile(r"(?:\+\d{1,3}[\s.-]?)?(?:\d[\s.-]?){9,12}\d")
 
 
-def check_input(description: str, *, openai_client: Any | None = None) -> None:
-    """Run the three input layers in order and raise on the first violation.
+def check_input(
+    description: str,
+    *,
+    openai_client: Any | None = None,
+    check_pii: bool = True,
+) -> None:
+    """Run the input layers in order and raise on the first violation.
 
     ``openai_client`` is optional so tests can opt out of the moderation call.
     In production it should be set; in unit tests we typically pass ``None`` and
     only exercise the regex layers.
+
+    ``check_pii=False`` (Session 16) runs moderation and injection but leaves PII
+    to the caller. The reason is that the right PII policy depends on the input.
+    A short project description has no business carrying an IBAN, so rejecting is
+    correct. A raw client meeting transcript legitimately contains a phone number
+    or an email — someone said them out loud in the meeting — and rejecting those
+    would make the flagship endpoint refuse ordinary work. There, PII is a reason
+    to route the result past a person (see :func:`find_pii`), not a reason to
+    refuse the request. The default keeps the Session 4 behaviour untouched.
     """
     if openai_client is not None:
         _check_moderation(description, openai_client)
     _check_prompt_injection(description)
-    _check_pii(description)
+    if check_pii:
+        _check_pii(description)
+
+
+def find_pii(text: str) -> list[str]:
+    """The kinds of personal data present, without raising. Empty == none found.
+
+    Same patterns as the rejecting layer, different policy: this one reports so a
+    caller can flag rather than refuse. Kinds, never the matched values — logging
+    the IBAN you just detected is its own data-protection incident.
+    """
+    kinds: list[str] = []
+    if _EMAIL_RE.search(text):
+        kinds.append("email")
+    if _IBAN_RE.search(text):
+        kinds.append("iban")
+    if _PHONE_RE.search(text):
+        kinds.append("phone")
+    return kinds
 
 
 def _check_moderation(description: str, openai_client: Any) -> None:

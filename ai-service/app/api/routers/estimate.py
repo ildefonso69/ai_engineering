@@ -18,6 +18,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 
 from app.api.rate_limiting import limiter
 from app.api.security import require_estimate_key
+from app.foundation.guardrails.input import InputGuardrailViolation
 from app.generation.rag.errors import RagError
 from app.generation.rag.estimator import estimate_from_transcript
 from app.generation.rag.schemas import Estimate, EstimateRequest
@@ -40,6 +41,15 @@ async def from_transcript(request: Request, payload: EstimateRequest) -> Estimat
             payload.transcript,
             idempotency_key=payload.idempotency_key,
         )
+    except InputGuardrailViolation as exc:
+        # 400, not 502: the request was refused, nothing upstream failed. The
+        # reason travels in the body so the business backend can show the person
+        # WHY — "rejected" with no explanation is indistinguishable from a bug.
+        log.info("estimate_input_rejected", reason=exc.reason)
+        raise HTTPException(
+            status_code=400,
+            detail={"reason": exc.reason, "message": str(exc)},
+        ) from exc
     except RagError as exc:
         log.error("estimate_failed", error_type=type(exc).__name__, error=str(exc)[:300])
         raise HTTPException(status_code=502, detail="Failed to produce an estimate.") from exc

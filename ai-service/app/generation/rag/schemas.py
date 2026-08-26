@@ -435,6 +435,25 @@ class Estimate(BaseModel):
     reasoning: str = Field(description="How the estimate was derived from the sources.")
     insufficient_context_explanation: str | None = None
 
+    # --- Session 16: human escalation as a STATE of the system ---------------
+    # These two are part of the schema Instructor shows the model, so the model
+    # CAN emit them — and whatever it emits is discarded: the output guardrail
+    # overwrites both unconditionally after generation
+    # (``estimator.py``, stage ``bounds_guardrail``). That overwrite is the
+    # point. A model allowed to set its own "no review needed" flag would be
+    # marking its own homework, and the one estimate you would most want a person
+    # to see is exactly the one a confused model would wave through.
+    requires_human_review: bool = Field(
+        default=False,
+        description="Set by the output guardrail when the estimate needs a person "
+        "to look at it before it is used. Never set by the model.",
+    )
+    review_reasons: list[str] = Field(
+        default_factory=list,
+        description="Why review was requested, in plain language, one entry per "
+        "triggered condition. Empty when requires_human_review is False.",
+    )
+
 
 # ---------------------------------------------------------------------------
 # Session 11 — programmatic citation verification.

@@ -330,6 +330,25 @@ class Settings(BaseSettings):
     # development and the test suite leave it blank.
     AI_SERVICE_TOKEN: str | None = None
 
+    # --- Session 16 (LLMOps: safety, observability, cost) -------------------- #
+    # Output guardrail on the RAG estimate path. Deterministic, always runs, and
+    # never rejects: an implausible number is flagged for a person, not thrown
+    # away. See app/foundation/guardrails/estimate_bounds.py for where the limit
+    # comes from -- it is derived from the retrieved evidence, not invented.
+    ESTIMATE_BOUNDS_ENABLED: bool = True
+    # How far above the retrieved evidence a total may sit before a human looks.
+    # 3x is deliberately generous: the project can legitimately be bigger than its
+    # analogs. It still catches the failure that motivated this guardrail, an 8x
+    # hours-as-days conflation (measured: 7.4x on the run that produced it).
+    ESTIMATE_MAX_EVIDENCE_RATIO: float = 3.0
+    # Absolute ceiling, ~10 person-years for a single project. Mirrors the 20,000h
+    # cap in the Session 12 validate_estimate tool, in days.
+    ESTIMATE_MAX_ENGINEER_DAYS: int = 2500
+    # Run the Session 4 input guardrails (moderation / injection / PII) on the RAG
+    # estimate path too. Until S16 they only guarded /api/v1/estimate, leaving the
+    # flagship endpoint with no input check at all.
+    RAG_INPUT_GUARDRAILS_ENABLED: bool = True
+
     @model_validator(mode="after")
     def validate_at_least_one_api_key(self) -> "Settings":
         """LiteLLM may try either provider via fallback, so we require at least one key."""
