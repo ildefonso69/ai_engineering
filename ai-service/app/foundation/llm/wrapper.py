@@ -53,9 +53,33 @@ MODEL_COSTS: dict[str, dict[str, float]] = {
 T = TypeVar("T", bound=BaseModel)
 
 
-def _estimate_cost(model: str, tokens_in: int, tokens_out: int) -> float:
+def _price_for(model: str) -> dict[str, float]:
+    """Look up a model in the pricing table, tolerating dated snapshot names.
+
+    Providers answer with the snapshot they actually served —
+    ``gpt-4o-mini-2024-07-18`` — while ``MODEL_COSTS`` is keyed by the alias we
+    ask for. An exact lookup therefore misses and prices the call at zero, which
+    is how a cost dashboard ends up reporting that every request was free.
+
+    Falls back to the LONGEST matching prefix, and the "longest" is load-bearing:
+    ``gpt-4o-mini-2024-07-18`` starts with both ``gpt-4o`` and ``gpt-4o-mini``,
+    and picking the shorter one would over-price a mini call by about 16x.
+    """
     base = _normalise_model_name(model)
-    costs = MODEL_COSTS.get(base) or MODEL_COSTS.get(model) or {"input": 0.0, "output": 0.0}
+    exact = MODEL_COSTS.get(base) or MODEL_COSTS.get(model)
+    if exact:
+        return exact
+    candidates = [key for key in MODEL_COSTS if base.startswith(key)]
+    if candidates:
+        return MODEL_COSTS[max(candidates, key=len)]
+    # Unknown model: zero, and say so, because a silent zero here is
+    # indistinguishable from a genuinely free call.
+    log.warning("model_not_in_pricing_table", model=base)
+    return {"input": 0.0, "output": 0.0}
+
+
+def _estimate_cost(model: str, tokens_in: int, tokens_out: int) -> float:
+    costs = _price_for(model)
     return round((tokens_in * costs["input"] + tokens_out * costs["output"]) / 1_000_000, 6)
 
 

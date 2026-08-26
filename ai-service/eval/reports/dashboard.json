@@ -1,0 +1,61 @@
+{
+  "generated_at": "2026-08-26T10:30:08+00:00",
+  "overall": {
+    "requests": 10,
+    "errors": 2,
+    "error_rate": 0.2,
+    "latency_mean_ms": 912.9,
+    "latency_p95_ms": 2289.0,
+    "cost_mean_usd": 6.87e-05,
+    "cost_total_usd": 0.000687,
+    "tokens_total": 4060,
+    "llm_calls": 2
+  },
+  "by_path": {
+    "/api/v1/estimate": {
+      "requests": 8,
+      "errors": 1,
+      "error_rate": 0.125,
+      "latency_mean_ms": 1099.25,
+      "latency_p95_ms": 2289.0,
+      "cost_mean_usd": 8.5875e-05,
+      "cost_total_usd": 0.000687,
+      "tokens_total": 4060,
+      "llm_calls": 2
+    },
+    "/search": {
+      "requests": 1,
+      "errors": 0,
+      "error_rate": 0.0,
+      "latency_mean_ms": 331.0,
+      "latency_p95_ms": 331.0,
+      "cost_mean_usd": 0.0,
+      "cost_total_usd": 0.0,
+      "tokens_total": 0,
+      "llm_calls": 0
+    },
+    "/v1/estimate/from-transcript": {
+      "requests": 1,
+      "errors": 1,
+      "error_rate": 1.0,
+      "latency_mean_ms": 4.0,
+      "latency_p95_ms": 4.0,
+      "cost_mean_usd": 0.0,
+      "cost_total_usd": 0.0,
+      "tokens_total": 0,
+      "llm_calls": 0
+    }
+  },
+  "sparkline": [
+    752.0,
+    308.0,
+    715.0,
+    2289.0,
+    222.0,
+    2270.0,
+    2236.0,
+    331.0,
+    2.0,
+    4.0
+  ]
+}

@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AI service — production signals</title>
+<style>
+  :root { --bg:#fbfaf9; --fg:#1a1a19; --muted:#6b6b68; --line:#e5e3e0;
+           --card:#fff; --accent:#b45309; --bad:#b91c1c; --ok:#15803d; }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg:#141413; --fg:#f0eee6; --muted:#9a9a95; --line:#2b2b28;
+             --card:#1c1c1a; --accent:#d97706; --bad:#f87171; --ok:#4ade80; }
+  }
+  * { box-sizing:border-box; }
+  body { margin:0; padding:2.5rem 1.5rem; background:var(--bg); color:var(--fg);
+         font:15px/1.55 ui-sans-serif,-apple-system,"Segoe UI",sans-serif; }
+  main { max-width:900px; margin:0 auto; }
+  h1 { font-size:1.4rem; margin:0 0 .25rem; letter-spacing:-.01em; }
+  .meta { color:var(--muted); font-size:.85rem; margin-bottom:2rem; }
+  .cards { display:grid; grid-template-columns:repeat(auto-fit,minmax(170px,1fr));
+            gap:.85rem; margin-bottom:2rem; }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:10px; padding:1rem; }
+  .label { color:var(--muted); font-size:.75rem; text-transform:uppercase; letter-spacing:.06em; }
+  .value { font-size:1.75rem; font-weight:600; margin:.3rem 0 .1rem;
+            font-variant-numeric:tabular-nums; }
+  .hint { color:var(--muted); font-size:.78rem; }
+  .spark { width:100%; height:90px; fill:var(--accent); opacity:.85;
+            background:var(--card); border:1px solid var(--line); border-radius:10px; }
+  h2 { font-size:.8rem; text-transform:uppercase; letter-spacing:.06em;
+        color:var(--muted); margin:2rem 0 .6rem; }
+  .scroll { overflow-x:auto; }
+  table { border-collapse:collapse; width:100%; font-size:.88rem; }
+  th,td { text-align:right; padding:.5rem .7rem; border-bottom:1px solid var(--line);
+           font-variant-numeric:tabular-nums; white-space:nowrap; }
+  th { color:var(--muted); font-weight:500; font-size:.75rem; text-transform:uppercase; }
+  th:first-child, td.path { text-align:left; font-family:ui-monospace,monospace; }
+  .bad { color:var(--bad); } .ok { color:var(--ok); }
+  footer { color:var(--muted); font-size:.78rem; margin-top:2.5rem;
+            border-top:1px solid var(--line); padding-top:1rem; }
+</style></head>
+<body><main>
+  <h1>AI service — production signals</h1>
+  <div class="meta">Generated 2026-08-26T10:30:08+00:00 · from <code>request_completed</code>
+  events in the structured logs</div>
+  <div class="cards"><div class="card"><div class="label">Requests</div><div class="value">10</div><div class="hint"></div></div><div class="card"><div class="label">Error rate</div><div class="value">20.0%</div><div class="hint">2 non-2xx</div></div><div class="card"><div class="label">Latency p95</div><div class="value">2.29s</div><div class="hint">mean 0.91s</div></div><div class="card"><div class="label">Cost / request</div><div class="value">$0.0001</div><div class="hint">$0.0007 total</div></div></div>
+  <h2>Latency, last 10 requests</h2>
+  <svg viewBox="0 0 640 90" preserveAspectRatio="none" class="spark" role="img" aria-label="Latency of the last 10 requests"><rect x="0.0" y="60.4" width="62.5" height="29.6" rx="1"/><rect x="64.0" y="77.9" width="62.5" height="12.1" rx="1"/><rect x="128.0" y="61.9" width="62.5" height="28.1" rx="1"/><rect x="192.0" y="0.0" width="62.5" height="90.0" rx="1"/><rect x="256.0" y="81.3" width="62.5" height="8.7" rx="1"/><rect x="320.0" y="0.7" width="62.5" height="89.3" rx="1"/><rect x="384.0" y="2.1" width="62.5" height="87.9" rx="1"/><rect x="448.0" y="77.0" width="62.5" height="13.0" rx="1"/><rect x="512.0" y="89.9" width="62.5" height="0.1" rx="1"/><rect x="576.0" y="89.8" width="62.5" height="0.2" rx="1"/></svg>
+  <h2>By endpoint</h2>
+  <div class="scroll"><table>
+    <thead><tr><th>path</th><th>reqs</th><th>errors</th><th>mean</th><th>p95</th>
+    <th>$/req</th><th>tokens</th></tr></thead>
+    <tbody><tr><td class='path'>/api/v1/estimate</td><td>8</td><td class='bad'>12%</td><td>1.10s</td><td>2.29s</td><td>$0.0001</td><td>4,060</td></tr><tr><td class='path'>/search</td><td>1</td><td class='ok'>0%</td><td>0.33s</td><td>0.33s</td><td>$0.0000</td><td>0</td></tr><tr><td class='path'>/v1/estimate/from-transcript</td><td>1</td><td class='bad'>100%</td><td>0.00s</td><td>0.00s</td><td>$0.0000</td><td>0</td></tr></tbody>
+  </table></div>
+  <footer>Health probes are excluded: called every 30s, they would dominate every
+  number here. The Session 12 agent path bypasses <code>LLMWrapper</code> and so
+  reports no tokens — a known blind spot, not a free request.</footer>
+</main></body></html>

@@ -281,3 +281,27 @@ def test_structured_call_reports_tokens_and_cost(wrapper: LLMWrapper) -> None:
     # 1000 * 0.15/1M + 500 * 0.60/1M
     assert meta["cost_usd"] == pytest.approx(_estimate_cost("gpt-4o-mini", 1_000, 500))
     assert meta["cost_usd"] > 0
+
+
+@pytest.mark.parametrize(
+    "served, alias",
+    [
+        ("gpt-4o-mini-2024-07-18", "gpt-4o-mini"),
+        ("gpt-4o-2024-11-20", "gpt-4o"),
+        ("openai/gpt-4o-mini-2024-07-18", "gpt-4o-mini"),
+    ],
+)
+def test_dated_model_snapshots_are_priced_like_their_alias(served: str, alias: str) -> None:
+    """Providers answer with the snapshot they served, not the alias we asked for.
+
+    An exact lookup misses and prices the call at zero — which is how a cost
+    dashboard ends up claiming every request was free. Note the mini case: the
+    name also starts with ``gpt-4o``, so the match must be the LONGEST prefix or
+    the call is over-priced roughly 16x.
+    """
+    assert _estimate_cost(served, 1_000, 500) == _estimate_cost(alias, 1_000, 500)
+    assert _estimate_cost(served, 1_000, 500) > 0
+
+
+def test_an_unknown_model_prices_at_zero_rather_than_guessing() -> None:
+    assert _estimate_cost("some-model-nobody-priced", 1_000, 500) == 0.0

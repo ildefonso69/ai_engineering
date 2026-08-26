@@ -274,6 +274,21 @@ es indistinguible de "el sistema estima alto" si solo miras una ejecución.
 es justo el tipo de cambio que pide un A/B contra el golden set, y el número que
 decide cuál gana es `within_range_rate`.
 
+### 4. Y un cuarto, que encontró el propio dashboard
+
+Con la instrumentación ya puesta, el primer panel salió con los tokens bien
+contados y **`cost_usd: 0.0` en todas las filas**. El motivo: OpenAI responde con
+la instantánea que sirvió de verdad —`gpt-4o-mini-2024-07-18`— mientras
+`MODEL_COSTS` está indexada por el alias `gpt-4o-mini`. La búsqueda exacta fallaba
+y la llamada se tarificaba a cero: un panel de costes afirmando que todo es
+gratis.
+
+Arreglado con `_price_for()`, que cae al **prefijo más largo** que coincida. Lo de
+"más largo" es lo que importa: `gpt-4o-mini-2024-07-18` empieza también por
+`gpt-4o`, y quedarse con el corto multiplicaría el precio por ~16. Un modelo
+desconocido sigue valiendo cero, pero ahora deja un `model_not_in_pricing_table`
+en el log, porque un cero silencioso es indistinguible de una llamada gratis.
+
 ### Lo que sí funcionó
 
 - **La abstención, en las tres ejecuciones.** `case-006` nunca inventó una cifra:
@@ -282,3 +297,23 @@ decide cuál gana es `within_range_rate`.
   El sistema no alucina *fuentes*; se equivoca en las *unidades*.
 - **La latencia p95 es de 165 s**, muy por encima de los 180 s a los que Rails
   cuelga la llamada. Sobre eso, [escalabilidad](scalability.md).
+
+### Una lectura de ejemplo del panel
+
+`eval/reports/dashboard.html` está generado a partir de
+`eval/reports/sample-production.log`, tráfico real (7 estimaciones, una búsqueda,
+un 422 y un 401, más 10 sondas de salud):
+
+```
+  requests          10          <- las 10 sondas de /health NO están aquí
+  error rate        20.0%       <- el 422 y el 401, provocados a propósito
+  latency mean      0.91s
+  latency p95       2.29s       <- la p95 es la que sufre la gente
+  cost / request    $0.0001
+  cost total        $0.0007     (4.060 tokens en 2 llamadas al modelo)
+```
+
+Diez peticiones y **solo dos llamadas al modelo**: las otras cinco estimaciones
+las sirvió la caché exacta. Eso también es una señal — una petición cacheada sale
+gratis y aparece con coste cero, y distinguirla de una que falló requiere mirar
+la columna de estado, no la de coste.
