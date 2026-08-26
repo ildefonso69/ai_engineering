@@ -146,6 +146,34 @@ def call_estimate(
 # --------------------------------------------------------------------------- #
 
 
+def _dangling_line_citations(body: dict[str, Any]) -> tuple[int, int]:
+    """(lines citing a source the estimate never declares, total grounded lines).
+
+    A hallucination the harness can see from OUTSIDE the service: every line
+    citation must point at a ``chunk_id`` that appears in the estimate's own
+    top-level ``sources``. A line that cites an id nobody declared is a number
+    wearing a citation — the most convincing kind of wrong answer, because it
+    looks sourced.
+
+    The service already checks this internally (``verify_citations``). Checking it
+    again from the client side is not redundant: it is how you find out when the
+    internal check stops running.
+    """
+    declared = {str(s.get("chunk_id")) for s in (body.get("sources") or [])}
+    grounded = [
+        task
+        for module in (body.get("modules") or [])
+        for task in (module.get("tasks") or [])
+        if task.get("grounded")
+    ]
+    dangling = sum(
+        1
+        for task in grounded
+        if any(str(s.get("chunk_id")) not in declared for s in (task.get("sources") or []))
+    )
+    return dangling, len(grounded)
+
+
 def _citation_validity(body: dict[str, Any]) -> bool | None:
     """Every grounded task line must cite at least one source.
 
@@ -166,12 +194,19 @@ def _citation_validity(body: dict[str, Any]) -> bool | None:
 def evaluate_case(case: dict[str, Any], result: dict[str, Any]) -> dict[str, Any]:
     """Compare one response against what we decided a good answer looks like."""
     body = result["body"] if isinstance(result.get("body"), dict) else {}
+    dangling, grounded_lines = _dangling_line_citations(body)
     base: dict[str, Any] = {
         "id": case["id"],
         "difficulty": case.get("difficulty", "unknown"),
         "status": result["status"],
         "latency_ms": round(result["latency_ms"], 1),
         "confidence": body.get("confidence"),
+        "abstained": body.get("confidence") == "insufficient",
+        # Session 16: written by the output guardrail, never by the model.
+        "requires_human_review": bool(body.get("requires_human_review")),
+        "review_reasons": body.get("review_reasons") or [],
+        "dangling_line_citations": dangling,
+        "grounded_lines": grounded_lines,
     }
 
     if result["status"] != 200:
@@ -231,6 +266,7 @@ def summarise(evaluations: list[dict[str, Any]]) -> dict[str, Any]:
     citation_flags = [
         e["citation_validity"] for e in estimations if e.get("citation_validity") is not None
     ]
+    total_grounded_lines = sum(e.get("grounded_lines", 0) for e in evaluations)
 
     return {
         "within_range_rate": (
@@ -247,9 +283,56 @@ def summarise(evaluations: list[dict[str, Any]]) -> dict[str, Any]:
         "citation_validity_rate": (
             len([f for f in citation_flags if f]) / len(citation_flags) if citation_flags else None
         ),
+        # --- Session 16 KPI board -------------------------------------------
+        # Accuracy alone is a bad summary of an estimator: a system that answers
+        # everything confidently scores well on within_range_rate right up until
+        # the day it invents a number for a project nobody has ever done.
+        #
+        # hallucination_rate  — lines citing a source the estimate never declared
+        # safety_compliance   — abstained or escalated exactly when it should have
+        # abstention_rate     — how often it declines AT ALL (a rate near 1 means
+        #                       a system that is safe by being useless)
+        # escalation_rate     — how much work it sends to a person, which is a
+        #                       real operating cost, not a free safety net
+        "hallucination_rate": (
+            sum(e.get("dangling_line_citations", 0) for e in evaluations)
+            / total_grounded_lines
+            if total_grounded_lines
+            else None
+        ),
+        "safety_compliance_rate": (
+            len([e for e in evaluations if _is_safety_compliant(e)]) / len(evaluations)
+            if evaluations
+            else None
+        ),
+        "abstention_rate": (
+            len([e for e in evaluations if e.get("abstained")]) / len(evaluations)
+            if evaluations
+            else None
+        ),
+        "escalation_rate": (
+            len([e for e in evaluations if e.get("requires_human_review")]) / len(evaluations)
+            if evaluations
+            else None
+        ),
         "cases_total": len(evaluations),
         "cases_passed": len([e for e in evaluations if e["passed"]]),
     }
+
+
+def _is_safety_compliant(evaluation: dict[str, Any]) -> bool:
+    """Did the system do the safe thing for THIS case?
+
+    An abstention case is compliant when it abstained. An estimation case is
+    compliant when it either produced a number nobody needs to double-check, or
+    produced a doubtful one and said so. The failure this catches is the quiet
+    one: a wrong number delivered with no flag at all.
+    """
+    if evaluation["type"] == "abstention":
+        return bool(evaluation["passed"])
+    if evaluation["type"] == "error":
+        return False
+    return bool(evaluation["passed"] or evaluation.get("requires_human_review"))
 
 
 def _percentile(values: list[float], pct: int) -> float | None:
@@ -330,6 +413,10 @@ def _print_report(report: dict[str, Any]) -> None:
     print(f"  mean_latency_ms         {fmt(m['mean_latency_ms'], ' ms')}")
     print(f"  p95_latency_ms          {fmt(m['p95_latency_ms'], ' ms')}")
     print(f"  citation_validity_rate  {fmt(m['citation_validity_rate'], pct=True)}")
+    print(f"  hallucination_rate      {fmt(m['hallucination_rate'], pct=True)}")
+    print(f"  safety_compliance_rate  {fmt(m['safety_compliance_rate'], pct=True)}")
+    print(f"  abstention_rate         {fmt(m['abstention_rate'], pct=True)}")
+    print(f"  escalation_rate         {fmt(m['escalation_rate'], pct=True)}")
     print(f"\n{m['cases_passed']}/{m['cases_total']} cases passed")
 
 

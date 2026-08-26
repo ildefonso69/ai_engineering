@@ -1,0 +1,17 @@
+{
+  "promoted_at": "2026-08-26T13:23:45+00:00",
+  "promoted_from": "report-20260826T100555.json",
+  "note": "First measured run against the deployed instance (26/08/2026). Quality is BAD on purpose: within_range_rate 0% from the hours-as-days prompt defect. It is the honest starting point \u2014 a baseline is where you are, not where you wish you were.",
+  "cases_total": 6,
+  "endpoint": "/v1/estimate/from-transcript",
+  "metrics": {
+    "within_range_rate": 0.0,
+    "mean_absolute_error": 310.4,
+    "abstention_correct": true,
+    "mean_latency_ms": 128044.83333333336,
+    "p95_latency_ms": 165402.6,
+    "citation_validity_rate": 1.0,
+    "cases_total": 6,
+    "cases_passed": 1
+  }
+}
