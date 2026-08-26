@@ -60,6 +60,13 @@ COPY --chown=appuser:appgroup app/       /app/app/
 COPY --chown=appuser:appgroup alembic/   /app/alembic/
 COPY --chown=appuser:appgroup scripts/   /app/scripts/
 COPY --chown=appuser:appgroup data/      /app/data/
+# Session 16: the evaluation harness ships WITH the service. Since S15 the AI
+# service publishes no ports, so the golden set can only be run from inside the
+# perimeter — which means the harness has to already be there. Copying it in
+# beats `docker cp`-ing a directory onto a running container every time, and it
+# is the same argument that made alembic/ and scripts/ part of the image.
+# ~40 KB; the reports/ directory is written at runtime.
+COPY --chown=appuser:appgroup eval/      /app/eval/
 COPY --chown=appuser:appgroup alembic.ini pyproject.toml /app/
 COPY --chown=appuser:appgroup --chmod=755 docker-entrypoint.sh /app/docker-entrypoint.sh
 

@@ -144,7 +144,9 @@ def test_complete_structured_chat_forwards_messages(wrapper: LLMWrapper) -> None
 
     expected = _Answer(text="ok")
     with patch.object(
-        wrapper._instructor.chat.completions, "create", return_value=expected
+        wrapper._instructor,
+        "create_with_completion",
+        return_value=(expected, _fake_completion("gpt-4o-mini")),
     ) as mocked:
         result, meta = wrapper.complete_structured_chat(
             messages=messages,
@@ -168,7 +170,9 @@ def test_complete_structured_chat_uses_anthropic_key_for_claude(wrapper: LLMWrap
         text: str
 
     with patch.object(
-        wrapper._instructor.chat.completions, "create", return_value=_Answer(text="x")
+        wrapper._instructor,
+        "create_with_completion",
+        return_value=(_Answer(text="x"), _fake_completion("claude-haiku-4-5-20251001")),
     ) as mocked:
         wrapper.complete_structured_chat(
             messages=[{"role": "user", "content": "hi"}],
@@ -242,3 +246,38 @@ def test_complete_takes_direct_path_when_runtime_override_active() -> None:
     assert router_call.call_count == 0
     assert direct.call_args.kwargs["model"] == "gpt-4o"
     assert result["model"] == "gpt-4o"
+
+
+def test_structured_call_reports_tokens_and_cost(wrapper: LLMWrapper) -> None:
+    """The Session 16 regression: the structured path must price itself.
+
+    Before S16 both structured methods called ``chat.completions.create``, which
+    returns only the parsed model — the provider's ``usage`` was dropped on the
+    floor. ``TurnObservation`` in the estimation service has always read
+    ``meta["cost_usd"]``, so every persisted estimation recorded 0.0 USD: not a
+    missing measurement, a wrong one.
+    """
+    from pydantic import BaseModel
+
+    class _Answer(BaseModel):
+        text: str
+
+    with patch.object(
+        wrapper._instructor,
+        "create_with_completion",
+        return_value=(
+            _Answer(text="ok"),
+            _fake_completion("gpt-4o-mini", input_tokens=1_000, output_tokens=500),
+        ),
+    ):
+        _, meta = wrapper.complete_structured(
+            system_prompt="s",
+            user_message="u",
+            response_model=_Answer,
+        )
+
+    assert meta["tokens_in"] == 1_000
+    assert meta["tokens_out"] == 500
+    # 1000 * 0.15/1M + 500 * 0.60/1M
+    assert meta["cost_usd"] == pytest.approx(_estimate_cost("gpt-4o-mini", 1_000, 500))
+    assert meta["cost_usd"] > 0

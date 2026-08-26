@@ -31,6 +31,7 @@ from litellm import Router
 from pydantic import BaseModel
 
 from app.foundation.llm.runtime_config import RuntimeModelConfig
+from app.foundation.observability.metrics import record_llm_call
 from app.generation.cag.exact import EstimationCache
 
 log = structlog.get_logger()
@@ -70,6 +71,35 @@ def _provider_from_model(model: str) -> str:
     if name.startswith("gpt") or name.startswith("o1") or name.startswith("o3"):
         return "openai"
     return "unknown"
+
+
+def _account_usage(raw: Any, model: str) -> dict[str, Any]:
+    """Read token usage off Instructor's raw completion, price it, and record it.
+
+    Instructor hands back the validated Pydantic model; the provider's ``usage``
+    survives only if you ask for the raw completion alongside it
+    (``create_with_completion``). Until Session 16 the two structured methods
+    below discarded it — so the whole RAG pipeline, which runs through them,
+    reported neither tokens nor cost, and every ``TurnObservation`` was persisted
+    with ``cost_usd=0.0``. A missing number is a gap; a zero is a lie.
+
+    Returns the three keys ``meta`` gains (``tokens_in`` / ``tokens_out`` /
+    ``cost_usd``) and, as a side effect, adds the call to the per-request
+    accumulator. Outside an HTTP request that side effect is a no-op.
+
+    LIMIT, stated rather than papered over: when Instructor re-prompts on a
+    validation error, ``usage`` describes the FINAL attempt, not the sum of the
+    attempts. A heavily retried call therefore under-reports.
+    """
+    usage = getattr(raw, "usage", None)
+    tokens_in = int(getattr(usage, "prompt_tokens", 0) or 0)
+    tokens_out = int(getattr(usage, "completion_tokens", 0) or 0)
+    # The provider echoes the model it actually served, which may differ from the
+    # alias we asked for; price what was served.
+    served = _normalise_model_name(getattr(raw, "model", None) or model)
+    cost_usd = _estimate_cost(served, tokens_in, tokens_out)
+    record_llm_call(tokens_in=tokens_in, tokens_out=tokens_out, cost_usd=cost_usd)
+    return {"tokens_in": tokens_in, "tokens_out": tokens_out, "cost_usd": cost_usd}
 
 
 class LLMWrapper:
@@ -200,6 +230,14 @@ class LLMWrapper:
 
         latency_ms = int((time.perf_counter() - t0) * 1000)
         result = self._normalise_response(response, latency_ms=latency_ms)
+        # This path already priced itself; it just never told anyone but the log.
+        # A cache hit returns earlier and is deliberately NOT recorded: nothing
+        # was spent, and counting it would make the cache look expensive.
+        record_llm_call(
+            tokens_in=result["usage"]["input_tokens"],
+            tokens_out=result["usage"]["output_tokens"],
+            cost_usd=result["cost_usd"],
+        )
         log.info(
             "llm_call_completed",
             model=result["model"],
@@ -253,7 +291,10 @@ class LLMWrapper:
 
         t0 = time.perf_counter()
         try:
-            result = self._instructor.chat.completions.create(
+            # ``create_with_completion``, not ``chat.completions.create``: the
+            # second returns only the parsed model and the provider's token
+            # usage dies with the response object.
+            result, raw = self._instructor.create_with_completion(
                 model=target_model,
                 api_key=api_key,
                 timeout=self.timeout,
@@ -278,12 +319,16 @@ class LLMWrapper:
             "model": _normalise_model_name(target_model),
             "provider": _provider_from_model(target_model),
             "latency_ms": latency_ms,
+            **_account_usage(raw, target_model),
         }
         log.info(
             "llm_structured_chat_completed",
             model=meta["model"],
             provider=meta["provider"],
             latency_ms=latency_ms,
+            tokens_in=meta["tokens_in"],
+            tokens_out=meta["tokens_out"],
+            cost_usd=meta["cost_usd"],
         )
         return result, meta
 
@@ -330,7 +375,10 @@ class LLMWrapper:
 
         t0 = time.perf_counter()
         try:
-            result = self._instructor.chat.completions.create(
+            # ``create_with_completion``, not ``chat.completions.create``: the
+            # second returns only the parsed model and the provider's token
+            # usage dies with the response object.
+            result, raw = self._instructor.create_with_completion(
                 model=target_model,
                 api_key=api_key,
                 timeout=self.timeout,
@@ -355,12 +403,20 @@ class LLMWrapper:
             "model": _normalise_model_name(target_model),
             "provider": _provider_from_model(target_model),
             "latency_ms": latency_ms,
+            # ``tokens_in`` / ``tokens_out`` / ``cost_usd``. The names are not
+            # free: ``TurnObservation`` in the estimation service has been
+            # reading exactly these three keys since Session 5, and getting
+            # nothing.
+            **_account_usage(raw, target_model),
         }
         log.info(
             "llm_structured_call_completed",
             model=meta["model"],
             provider=meta["provider"],
             latency_ms=latency_ms,
+            tokens_in=meta["tokens_in"],
+            tokens_out=meta["tokens_out"],
+            cost_usd=meta["cost_usd"],
         )
         return result, meta
 

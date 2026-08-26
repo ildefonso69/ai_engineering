@@ -1,0 +1,62 @@
+[
+  {
+    "id": "case-001-ecommerce-checkout",
+    "difficulty": "easy",
+    "transcript": "Right, thanks for making the time. We run a mid-sized online shop selling outdoor gear, about forty thousand SKUs, and the checkout is the part that hurts. Today it is a single page that times out under load and we lose carts every weekend. What we want is a rebuilt cart and checkout: saved carts per customer, promotion codes, split shipping when items come from different warehouses, and card plus PayPal. We also want the product search to stop being embarrassing, so faceted search over categories, brand and price. And transactional email for order confirmation and shipping updates. Backend is Node.js and we would like to stay there. No mobile app in this phase, no marketplace, no multi-currency. The team is three engineers plus a part-time designer, and the board wants it live for the autumn season.",
+    "expected_engineer_days": 75,
+    "acceptable_range": [45, 120],
+    "expected_sources_include": [],
+    "expect_abstention": false,
+    "notes": "Checkout & Cart + Catalog & Search + Notifications over Node.js. The ecommerce corpus holds 8 projects averaging 75 engineer-days (range 9-100), so this is the case with the clearest precedent."
+  },
+  {
+    "id": "case-002-healthcare-patient-portal",
+    "difficulty": "medium",
+    "transcript": "We are a private clinic group, eleven sites across the country, and every site books appointments differently. The goal is one patient portal. Patients log in, see their upcoming appointments, book and reschedule, download their reports, and message their doctor. Clinicians need the other side of it: agenda per practitioner, room and equipment availability, and the clinical record with history and prescriptions. The part our lawyers care about is the audit trail, consent management and data retention, because we are under health data regulation and we have already been audited once. We also need to pull lab results in from two external providers, both of them HL7. Django on the backend, Postgres. Teleconsultation is explicitly out of scope for now, we tried it during the pandemic and it was a mess. Rough target is end of the fiscal year.",
+    "expected_engineer_days": 150,
+    "acceptable_range": [95, 220],
+    "expected_sources_include": [],
+    "expect_abstention": false,
+    "notes": "Patient Portal + Appointments & Agenda + Clinical Records + Health Data Compliance + Clinical Interoperability. Healthcare is the densest sector in the corpus (44 projects, average 147 engineer-days, range 67-200)."
+  },
+  {
+    "id": "case-003-logistics-fleet-telemetry",
+    "difficulty": "medium",
+    "transcript": "We operate a regional last-mile fleet, about two hundred vans. Right now dispatch is a whiteboard and a WhatsApp group, which is exactly as bad as it sounds. We want route planning that accounts for delivery windows and vehicle capacity, live position from the telematics boxes already fitted in the vans, and a driver app that keeps working when the van goes through a valley with no signal and syncs when it comes back. Warehouse side we need inventory per depot so dispatch knows what is actually loaded. Customers should get a notification with a tracking link. Python and FastAPI, we have that in house. We are not building the telematics hardware, it is a third-party box with a documented API. Six months would be ideal, nine is survivable.",
+    "expected_engineer_days": 100,
+    "acceptable_range": [62, 150],
+    "expected_sources_include": [],
+    "expect_abstention": false,
+    "notes": "Fleet & Routing + Telemetry & IoT + Field Work & Offline Sync + Warehouse & Inventory over python_fastapi. Logistics has 4 projects averaging 97 engineer-days (range 58-141) - a thinner precedent than case-001, deliberately."
+  },
+  {
+    "id": "case-004-finance-regulatory-reporting",
+    "difficulty": "medium",
+    "transcript": "We are the technology side of a mid-tier asset manager. The regulator has changed the reporting format and our current pipeline is a set of spreadsheets that one person understands. We need the regulatory reports generated from source data, with lineage, so that when a supervisor asks where a number came from we can answer in minutes rather than days. That means ingestion from the custodian feeds, validation rules with an exceptions queue for the operations team, the report templates themselves, and an approval workflow with a real four-eyes check before anything is submitted. Access control matters enormously here: who may see which portfolios, and every access logged. Java and Spring, that is what our platform team supports. We are not touching the trading systems. The regulatory deadline is fixed and it is in nine months.",
+    "expected_engineer_days": 90,
+    "acceptable_range": [55, 140],
+    "expected_sources_include": [],
+    "expect_abstention": false,
+    "notes": "Regulatory Reporting + Data & Integrations + Security & Compliance + Analytics & Reporting over java_spring. Finance: 8 projects, average 84 engineer-days, range 22-139."
+  },
+  {
+    "id": "case-005-multi-component-edge",
+    "difficulty": "hard",
+    "transcript": "This one is broad, so bear with me. We are a professional training provider and we are consolidating three products into one platform. First, the learning side: course catalogue, enrolment, lesson sequencing, quizzes and certification, and a gradebook the instructors actually trust. Second, the video side: our lectures are currently on a third-party player and we want our own streaming with adaptive bitrate, resumable playback and captions, because retention analytics on someone else's player is useless to us. Third, everything has to talk to the systems we already run: the CRM for leads, the billing platform for subscriptions, and single sign-on for corporate customers whose staff log in with their employer's identity provider. Ruby on Rails for the platform. We know this is several projects wearing a trench coat, which is why we want the estimate broken down by block rather than one number.",
+    "expected_engineer_days": 190,
+    "acceptable_range": [120, 280],
+    "expected_sources_include": [],
+    "expect_abstention": false,
+    "notes": "The edge case: spans TWO sectors (education ~105 and media ~104 average) plus an integrations platform, so no single historical project matches. Tests whether retrieval composes precedents instead of anchoring on one."
+  },
+  {
+    "id": "case-006-avionics-certification-no-precedent",
+    "difficulty": "abstention",
+    "transcript": "We build flight control computers for regional turboprops and we need the software side estimated. The scope is the primary flight control law implementation and its certification evidence package to DO-178C Design Assurance Level B. That means requirements traceability down to the object code, MC/DC structural coverage, a qualified toolchain, formal verification of the control laws in SCADE, plus the Stage of Involvement audits with the certification authority and the accompanying DO-330 tool qualification. The target hardware is a dual-redundant PowerPC board running a partitioned ARINC 653 real-time operating system. We are not asking about the hardware, only the software and the certification effort. Our previous programme took four years and we suspect that was mismanaged rather than intrinsic.",
+    "expected_engineer_days": null,
+    "acceptable_range": null,
+    "expected_sources_include": [],
+    "expect_abstention": true,
+    "notes": "THE SAFETY CASE. The corpus covers eight sectors - finance, ecommerce, healthcare, industrial, logistics, education, media, government - and safety-critical avionics certification is in none of them. There is no analog for DO-178C evidence, MC/DC coverage or ARINC 653 partitioning. The correct answer is confidence='insufficient' with no number, not a plausible-looking guess. A system that answers this one is not accurate, it is dangerous."
+  }
+]

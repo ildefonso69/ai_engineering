@@ -1,5 +1,6 @@
 import structlog
 from contextlib import AsyncExitStack, asynccontextmanager
+from time import perf_counter
 from uuid import uuid4
 
 from fastapi import FastAPI, Request
@@ -14,6 +15,7 @@ from app.api import config as config_api
 from app.api import estimations, ingestion, sessions
 from app.api.rate_limiting import limiter, rate_limit_exceeded_handler
 from app.api.service_token import service_token_middleware
+from app.foundation.observability.metrics import begin_request, end_request
 from app.api.routers.estimate import router as estimate_router
 from app.api.routers.estimate_agent import router as estimate_agent_router
 from app.api.routers.estimate_stages import router as estimate_stages_router
@@ -48,6 +50,11 @@ def configure_logging() -> None:
         logger_factory=structlog.PrintLoggerFactory(),
         cache_logger_on_first_use=True,
     )
+
+
+# Module-level logger for the middleware below. Safe before ``configure_logging``
+# runs: structlog resolves the configuration lazily on first use.
+log = structlog.get_logger()
 
 
 @asynccontextmanager
@@ -174,17 +181,57 @@ app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, rate_limit_exceeded_handler)
 
 
+# Excluded from the per-request metric event: the health probes, and only them.
+# /health is called every 30 seconds by Docker's healthcheck, so at that rate it
+# would be most of the rows and the p95 latency of "the service" would really be
+# the p95 of a liveness probe.
+#
+# Deliberately NOT reusing ``EXEMPT_PATHS`` from the service-token middleware,
+# even though it starts with the same two entries. That list answers "who may
+# skip authentication"; this one answers "what is not real traffic". /docs and
+# /openapi.json belong in the first and not in the second — they are requests
+# somebody actually made. Two questions, two lists.
+_METRICS_EXEMPT_PATHS = frozenset({"/health", "/health/ready"})
+
+
 @app.middleware("http")
 async def request_id_middleware(request: Request, call_next):
-    """Assign a correlation id per request, bind it for structlog, and echo it
-    back on the ``X-Request-ID`` response header so failures are debuggable."""
+    """Correlation id + the per-request metric event (Session 16).
+
+    Assigns a correlation id, binds it for structlog, echoes it back on the
+    ``X-Request-ID`` response header, and emits ONE ``request_completed`` event
+    carrying latency, token counts, derived cost and status.
+
+    That single event is what the dashboard reads. Doing it here rather than per
+    router is what makes it complete: a request that fails before reaching a
+    router still gets counted, which is the only way the error rate can be
+    trusted.
+    """
     request_id = request.headers.get("X-Request-ID") or str(uuid4())
     request.state.request_id = request_id
     structlog.contextvars.bind_contextvars(request_id=request_id)
+
+    path = request.url.path
+    measured = path not in _METRICS_EXEMPT_PATHS
+    token = begin_request() if measured else None
+    started = perf_counter()
+    status = 500  # if call_next raises, the client saw a 500; record that.
     try:
         response = await call_next(request)
+        status = response.status_code
     finally:
+        if token is not None:
+            metrics = end_request(token)
+            log.info(
+                "request_completed",
+                path=path,
+                method=request.method,
+                status=status,
+                latency_ms=int((perf_counter() - started) * 1000),
+                **metrics.as_dict(),
+            )
         structlog.contextvars.unbind_contextvars("request_id")
+
     response.headers["X-Request-ID"] = request_id
     return response
 

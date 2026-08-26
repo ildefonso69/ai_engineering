@@ -29,6 +29,7 @@ Cómo se arranca, se despliega y se arregla.
 | [CI/CD](ci-cd.md) | El pipeline etapa por etapa, secretos, y por qué en CI no se llama al modelo |
 | [Despliegue en EC2](deploy-ec2.md) | Puesta en cloud paso a paso: aprovisionar, TLS, desplegar, verificar |
 | [Escalabilidad y alta concurrencia](scalability.md) | Los límites reales del sistema y qué se rompe primero |
+| [Evaluación y monitorización](evaluation.md) | Golden set, arnés de evaluación y dashboard: si el sistema estima bien y a qué precio |
 | [Runbook: el servicio IA no responde](runbooks/ai-service-down.md) | Diagnóstico y reinicio seguro cuando algo está caído |
 
 ## Usuario
