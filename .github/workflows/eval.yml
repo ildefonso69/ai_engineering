@@ -148,7 +148,11 @@ jobs:
           # Prints what WOULD become the reference. Committing it stays a human
           # act on a branch, deliberately: a pipeline that moves its own baseline
           # certifies whatever it happens to produce.
+          # `printf | sort` rather than `ls -t`: the reports are timestamped in
+          # their names, so a lexical sort IS chronological, and shellcheck is
+          # right that parsing ls is a habit worth not having.
+          latest=$(printf '%s\n' eval/reports/report-*.json | sort -r | head -1)
           uv run --no-project python eval/promote_baseline.py \
-            --report "$(ls -t eval/reports/report-*.json | head -1)" \
+            --report "$latest" \
             --note "Promoted from Evaluation run ${{ github.run_number }}"
           cat eval/baseline.json
