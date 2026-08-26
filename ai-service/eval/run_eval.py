@@ -97,8 +97,13 @@ def load_golden_set(path: Path | str = DEFAULT_GOLDEN_SET) -> list[dict[str, Any
 # --------------------------------------------------------------------------- #
 
 
-def build_headers() -> dict[str, str]:
+def build_headers(variant: str | None = None) -> dict[str, str]:
     headers = {"Content-Type": "application/json"}
+    if variant:
+        # Forces the A/B arm for the whole run. An evaluation must not be split
+        # across arms by the rollout percentage — half a golden set per variant
+        # measures neither.
+        headers["X-Variant"] = variant
     token = os.environ.get("AI_SERVICE_TOKEN")
     api_key = os.environ.get("ESTIMATE_API_KEY")
     if token:
@@ -353,13 +358,20 @@ def _percentile(values: list[float], pct: int) -> float | None:
 
 
 def run(
-    cases: list[dict[str, Any]], *, base_url: str, timeout: float, verbose: bool = True
+    cases: list[dict[str, Any]],
+    *,
+    base_url: str,
+    timeout: float,
+    variant: str | None = None,
+    verbose: bool = True,
 ) -> dict[str, Any]:
     evaluations: list[dict[str, Any]] = []
     call_times: list[float] = []
     started_at = datetime.now(timezone.utc)
 
-    with httpx.Client(base_url=base_url.rstrip("/"), headers=build_headers()) as client:
+    with httpx.Client(
+        base_url=base_url.rstrip("/"), headers=build_headers(variant)
+    ) as client:
         for index, case in enumerate(cases, start=1):
             _throttle(call_times)
             if verbose:
@@ -376,6 +388,7 @@ def run(
         "finished_at": datetime.now(timezone.utc).isoformat(),
         "base_url": base_url,
         "endpoint": ENDPOINT,
+        "variant": variant,
         "metrics": summarise(evaluations),
         "cases": evaluations,
     }
@@ -430,6 +443,10 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--timeout", type=float, default=600.0)
     parser.add_argument("--limit", type=int, default=None, help="Run only the first N cases")
     parser.add_argument("--case", default=None, help="Run a single case by id")
+    parser.add_argument(
+        "--variant", choices=("a", "b"), default=None,
+        help="Force an A/B arm for the whole run (sent as X-Variant)",
+    )
     args = parser.parse_args(argv)
 
     cases = load_golden_set(args.golden_set)
@@ -441,17 +458,21 @@ def main(argv: list[str] | None = None) -> int:
     if args.limit:
         cases = cases[: args.limit]
 
-    print(f"Evaluation — {len(cases)} case(s) against {args.base_url}{ENDPOINT}")
+    arm = f" · variant {args.variant}" if args.variant else ""
+    print(f"Evaluation — {len(cases)} case(s) against {args.base_url}{ENDPOINT}{arm}")
     if "X-Service-Token" not in build_headers():
         print(f"{YELLOW}  AI_SERVICE_TOKEN unset — fine locally, a 401 against the instance{RESET}")
 
-    report = run(cases, base_url=args.base_url, timeout=args.timeout)
+    report = run(
+        cases, base_url=args.base_url, timeout=args.timeout, variant=args.variant
+    )
     _print_report(report)
 
     out_dir = Path(args.out)
     out_dir.mkdir(parents=True, exist_ok=True)
     stamp = report["started_at"].replace(":", "").replace("-", "").split(".")[0]
-    out_path = out_dir / f"report-{stamp}.json"
+    suffix = f"-{args.variant}" if args.variant else ""
+    out_path = out_dir / f"report-{stamp}{suffix}.json"
     out_path.write_text(json.dumps(report, indent=2), encoding="utf-8")
     print(f"{DIM}report → {out_path}{RESET}")
 

@@ -39,6 +39,7 @@
 
   <% if view %>
     <% estimate = view.estimate %>
+    <%= render "rag/shared/review_banner", estimate: estimate %>
 
     <%# Session 12 · the agent's one-step decomposition trace (why it split it so). %>
     <% if (trace = run.generation_agent_trace) %>

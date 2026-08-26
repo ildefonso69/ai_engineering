@@ -1,0 +1,42 @@
+<%#
+  Session 16 — human escalation surfaced as a state of the estimate.
+
+  The decision is NOT made here. The AI service's deterministic output guardrail
+  already decided, and this partial routes on it. Re-deriving the verdict in the
+  platform would give two answers to one question, and the one written in the
+  audit log would be the other one.
+
+  Rendered only when the estimate carries a number the guardrail doubts. An
+  abstention is not a review case: the system declining to answer is the system
+  working, and sending every abstention to a person trains reviewers to
+  rubber-stamp the whole queue.
+%>
+<% if estimate.respond_to?(:needs_review?) && estimate.needs_review? %>
+  <div class="mb-5 rounded-md border border-amber-400/40 bg-amber-400/10 p-4"
+       role="status" aria-live="polite">
+    <div class="flex items-start gap-3">
+      <svg class="h-5 w-5 shrink-0 text-amber-300 mt-0.5" fill="none" viewBox="0 0 24 24"
+           stroke="currentColor" stroke-width="2" aria-hidden="true">
+        <path stroke-linecap="round" stroke-linejoin="round"
+              d="M12 9v4m0 4h.01M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z" />
+      </svg>
+      <div class="flex-1">
+        <p class="text-sm font-bold tracking-tight text-amber-200">
+          Esta estimación necesita revisión humana
+        </p>
+        <p class="mt-1 text-xs text-white/60">
+          El servicio IA la ha entregado igualmente — no se descarta trabajo ya pagado —
+          pero sus comprobaciones deterministas no la avalan.
+        </p>
+        <ul class="mt-3 space-y-1.5">
+          <% estimate.review_reasons.each do |reason| %>
+            <li class="flex gap-2 text-xs text-white/80">
+              <span class="text-amber-300/70" aria-hidden="true">·</span>
+              <span><%= reason %></span>
+            </li>
+          <% end %>
+        </ul>
+      </div>
+    </div>
+  </div>
+<% end %>

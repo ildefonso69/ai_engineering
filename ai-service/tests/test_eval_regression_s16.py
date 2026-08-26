@@ -162,3 +162,98 @@ def test_latest_report_picks_the_newest(tmp_path):
     for name in ("report-20260101T000000.json", "report-20260826T100555.json"):
         (tmp_path / name).write_text("{}")
     assert latest_report(tmp_path).name == "report-20260826T100555.json"
+
+
+# --------------------------------------------------------------------------- #
+# Dashboard: variants, stages, alerts
+# --------------------------------------------------------------------------- #
+
+
+def _req(**fields):
+    return json.dumps({"event": "request_completed", **fields})
+
+
+def _stage(**fields):
+    return json.dumps({"event": "stage.completed", **fields})
+
+
+def test_forced_requests_are_excluded_from_the_ab_comparison():
+    """A demo request is not evidence about the population.
+
+    Letting X-Variant calls into the comparison is how a demo ends up deciding a
+    rollout.
+    """
+    from eval.dashboard import aggregate, parse_events
+
+    events = parse_events([
+        _req(path="/e", status=200, latency_ms=1000, cost_usd=0.02, variant="a"),
+        _req(path="/e", status=200, latency_ms=1000, cost_usd=0.01, variant="b"),
+        _req(path="/e", status=200, latency_ms=9000, cost_usd=9.99, variant="b",
+             variant_forced=True),
+    ])
+    by_variant = aggregate(events)["by_variant"]
+    assert by_variant["b"]["requests"] == 1
+    assert by_variant["b"]["cost_mean_usd"] == pytest.approx(0.01)
+
+
+def test_stage_costs_are_ranked_by_where_the_money_actually_goes():
+    from eval.dashboard import aggregate, parse_events
+
+    stages = parse_events([
+        _stage(stage="retrieval", duration_ms=120, stage_cost_usd=0.0),
+        _stage(stage="generation", duration_ms=90_000, stage_cost_usd=0.29),
+        _stage(stage="reformulation", duration_ms=1_200, stage_cost_usd=0.01),
+    ], "stage.completed")
+    by_stage = aggregate([], stages)["by_stage"]
+    assert list(by_stage) == ["generation", "reformulation", "retrieval"]
+    assert by_stage["retrieval"]["cost_total_usd"] == 0.0
+
+
+def test_the_abstention_rate_is_a_first_class_signal():
+    """Read next to the error rate: a rise here is the system being careful, a
+    rise there is the system being broken."""
+    from eval.dashboard import aggregate, parse_events
+
+    events = parse_events([
+        _req(path="/e", status=200, latency_ms=10, abstained=True),
+        _req(path="/e", status=200, latency_ms=10, abstained=False),
+    ])
+    assert aggregate(events)["overall"]["abstention_rate"] == 0.5
+
+
+@pytest.mark.parametrize(
+    "kwargs, expected_fragment",
+    [
+        ({"p95_ms": 500.0, "cost_usd": None, "error_rate": None}, "p95 latency"),
+        ({"p95_ms": None, "cost_usd": 0.001, "error_rate": None}, "cost per request"),
+        ({"p95_ms": None, "cost_usd": None, "error_rate": 0.1}, "error rate"),
+    ],
+)
+def test_each_threshold_can_fire_on_its_own(kwargs, expected_fragment):
+    from eval.dashboard import aggregate, check_alerts, parse_events
+
+    report = aggregate(parse_events([
+        _req(path="/e", status=200, latency_ms=2000, cost_usd=0.05),
+        _req(path="/e", status=502, latency_ms=100, cost_usd=0.0),
+    ]))
+    breaches = check_alerts(report, **kwargs)
+    assert any(expected_fragment in b for b in breaches)
+
+
+def test_no_threshold_means_no_alert():
+    """Absent is 'not watched', not 'watched with a default nobody chose'."""
+    from eval.dashboard import aggregate, check_alerts, parse_events
+
+    report = aggregate(parse_events([_req(path="/e", status=502, latency_ms=99_999)]))
+    assert check_alerts(report, p95_ms=None, cost_usd=None, error_rate=None) == []
+
+
+def test_a_report_that_does_not_declare_its_arm_is_never_matched(tmp_path):
+    """Treating an unlabelled run as A publishes a conclusion about a run that
+    never happened."""
+    from eval.compare_variants import latest_for_variant
+
+    (tmp_path / "report-1.json").write_text(json.dumps({"metrics": {}}))
+    (tmp_path / "report-2.json").write_text(json.dumps({"variant": "b", "metrics": {}}))
+    assert latest_for_variant(tmp_path, "a") is None
+    assert latest_for_variant(tmp_path, "b").name == "report-2.json"

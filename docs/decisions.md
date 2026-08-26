@@ -286,3 +286,98 @@ Se listan en vez de omitirse:
 4. **La restauración del corpus** se ha probado en la dirección del volcado
    (23 MB, con `alembic_version` y las tres tablas de chunks). El `pg_restore`
    contra una instancia limpia no se ha ejecutado.
+
+---
+
+# Sesión 16 — LLMOps
+
+## 15. La evaluación es un pipeline aparte, no un job más
+
+`ci.yml` reservaba un `TODO(S16)` para "las etapas de LLMOps". Al llenarlo, la
+respuesta resultó ser **otro fichero**: `.github/workflows/eval.yml`.
+
+|  | `ci.yml` | `eval.yml` |
+|---|---|---|
+| Cuándo | cada commit | nocturno + bajo demanda |
+| Modelo | doblado, siempre | real, siempre |
+| Coste | cero | un par de dólares por ejecución |
+| Rojo significa | "has roto el código" | "el sistema ha empeorado" |
+
+Meter el segundo dentro del primero es justo el error que esta separación evita:
+cada commit esperaría minutos, costaría dinero y fallaría de forma no
+determinista — y en una semana alguien pondría `continue-on-error` y nadie
+volvería a mirarlo.
+
+**Lo que la S16 añadió a `ci.yml` es nada**, y eso es la señal de que la costura
+que dejó la S15 estaba bien puesta.
+
+## 16. El arnés se ejecuta DENTRO del perímetro
+
+Desde la S15 el servicio IA no publica puertos. `eval.yml` no puede apuntar el
+arnés al servicio desde un runner de GitHub, así que lo **transporta** a la
+instancia y lo ejecuta allí. No es un rodeo: es la frontera haciendo su trabajo.
+
+Dos consecuencias que merecen quedar escritas:
+
+- **El golden set viaja desde el commit**, no desde la imagen desplegada. La vara
+  de medir pertenece al código que se evalúa; añadir un caso no puede exigir un
+  redespliegue antes de poder medir nada.
+- **CI no guarda ninguna clave de modelo.** La evaluación gasta las credenciales
+  del propio sistema desplegado, dentro de él.
+
+## 17. Los guardrails no están donde el enunciado los pedía
+
+El enunciado sitúa los guardrails en `ai-service/app/guardrails/` y la
+observabilidad en `ai-service/app/observability.py`. En este repo van a
+`app/foundation/guardrails/` y `app/foundation/observability/`, que es lo que
+manda `ai-service/ARCHITECTURE.md`.
+
+El motivo no es estético: la aritmética de límites la necesitan **dos capas que no
+pueden importarse entre sí** (`generation/rag` y `domain/graph`). En `foundation`
+la ven las dos, y por eso habla solo en números — ni `Estimate` ni
+`RetrievedChunk` — y cada capa adapta sus propios tipos.
+
+## 18. El guardrail de salida marca, no rechaza
+
+Cuando una cifra no se sostiene frente a la evidencia recuperada, la estimación
+**se devuelve igualmente**, marcada con `requires_human_review` y el motivo en
+claro. No se descarta.
+
+Descartar trabajo que el cliente ya ha pagado porque un umbral se movió convierte
+un problema de calidad en una caída — y el umbral es justo la parte que más
+probablemente esté mal al principio. La plataforma Rails **enruta** sobre esa
+marca; no la vuelve a decidir. Si la recalculara habría dos respuestas para una
+pregunta, y la que quedaría en el log de auditoría sería la otra.
+
+## 19. El PII se rechaza en una ruta y se reporta en la otra
+
+`check_input` sigue rechazando datos personales en `/api/v1/estimate`, donde la
+entrada es una descripción corta de proyecto que no tiene por qué llevar un IBAN.
+
+En `/v1/estimate/from-transcript` **se reporta**, y pasa a ser un motivo de
+revisión. Una transcripción real de reunión contiene un teléfono porque alguien lo
+dijo en voz alta; rechazarlas haría que el endpoint principal se negara a hacer
+trabajo ordinario. La política correcta depende de la entrada, no del guardrail.
+
+## 20. La variante B es solo el experimento de coste
+
+B = modelo pequeño para generar + caché de embeddings. **Nada más.**
+
+Era tentador meter también el arreglo del prompt que destapó el pre-ejercicio —
+saldría una variante más barata *y* más precisa— y es exactamente lo que vuelve
+inservible un resultado: cuando los números se mueven no puedes decir cuál de los
+dos cambios los movió. Una variable por experimento; el arreglo del prompt tiene
+su propia comparación.
+
+El reparto **hashea el `request_id`** en vez de sortear: un reintento se queda en
+su brazo, y el brazo de cualquier petición pasada se puede recalcular desde su
+traza sin haber guardado nada. El porcentaje se mueve en caliente
+(`PUT /api/v1/config/ab`) porque un porcentaje que exige redespliegue no es un
+experimento, son dos despliegues.
+
+## 21. Umbrales de alerta, no detección de anomalías
+
+Un número que elegiste y escribiste se puede discutir en una revisión. Un modelo
+que decide qué es "raro" es una cosa más que puede estar silenciosamente mal, y
+nadie la audita nunca. Los tres umbrales salen de datos medidos, no de intuición
+(ver [observabilidad](observability.md)).

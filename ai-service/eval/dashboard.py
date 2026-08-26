@@ -41,6 +41,7 @@ from pathlib import Path
 from typing import Any, Iterable
 
 EVENT = "request_completed"
+STAGE_EVENT = "stage.completed"
 
 DIM = "\033[2m"
 RESET = "\033[0m"
@@ -54,7 +55,7 @@ YELLOW = "\033[33m"
 # --------------------------------------------------------------------------- #
 
 
-def parse_events(lines: Iterable[str]) -> list[dict[str, Any]]:
+def parse_events(lines: Iterable[str], event: str = EVENT) -> list[dict[str, Any]]:
     """Pull the ``request_completed`` records out of a log stream.
 
     Tolerant by design: a log file is a mixed bag — uvicorn's own access lines,
@@ -65,7 +66,7 @@ def parse_events(lines: Iterable[str]) -> list[dict[str, Any]]:
     events: list[dict[str, Any]] = []
     for line in lines:
         line = line.strip()
-        if not line or EVENT not in line:
+        if not line or event not in line:
             continue
         # `docker compose logs` without --no-log-prefix writes "service  | {...}".
         if "|" in line and not line.startswith("{"):
@@ -77,7 +78,7 @@ def parse_events(lines: Iterable[str]) -> list[dict[str, Any]]:
             record = json.loads(line[brace:])
         except json.JSONDecodeError:
             continue
-        if isinstance(record, dict) and record.get("event") == EVENT:
+        if isinstance(record, dict) and record.get("event") == event:
             events.append(record)
     return events
 
@@ -114,16 +115,35 @@ def _row(events: list[dict[str, Any]]) -> dict[str, Any]:
         "cost_total_usd": sum(costs),
         "tokens_total": sum(int(e.get("total_tokens", 0) or 0) for e in events),
         "llm_calls": sum(int(e.get("llm_calls", 0) or 0) for e in events),
+        # The share of requests where the system declined to answer. Read together
+        # with the error rate: a rise here is the system being careful, a rise
+        # there is the system being broken, and confusing the two costs you either
+        # a needless incident or a missed one.
+        "abstention_rate": (
+            len([e for e in events if e.get("abstained")]) / len(events) if events else 0.0
+        ),
     }
 
 
-def aggregate(events: list[dict[str, Any]]) -> dict[str, Any]:
+def aggregate(
+    events: list[dict[str, Any]], stages: list[dict[str, Any]] | None = None
+) -> dict[str, Any]:
     by_path: dict[str, list[dict[str, Any]]] = defaultdict(list)
     for event in events:
         by_path[str(event.get("path", "?"))].append(event)
 
+    # Only requests the split actually assigned. A forced request (X-Variant on
+    # the demo, or a debugging call) is not evidence about the population, and
+    # letting it into the comparison is how a demo ends up deciding a rollout.
+    by_variant: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for event in events:
+        if event.get("variant") and not event.get("variant_forced"):
+            by_variant[str(event["variant"])].append(event)
+
     paths = {path: _row(rows) for path, rows in by_path.items()}
     return {
+        "by_variant": {v: _row(rows) for v, rows in sorted(by_variant.items())},
+        "by_stage": _stage_rows(stages or []),
         "generated_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
         "overall": _row(events),
         # Busiest first: the row that dominates the overall number is the one
@@ -136,6 +156,62 @@ def aggregate(events: list[dict[str, Any]]) -> dict[str, Any]:
 # --------------------------------------------------------------------------- #
 # Rendering — terminal
 # --------------------------------------------------------------------------- #
+
+
+def _stage_rows(stages: list[dict[str, Any]]) -> dict[str, Any]:
+    """Where the time and the money actually go, per pipeline stage.
+
+    This is the table that ends arguments. "Generation is 94% of the cost and
+    retrieval is 0%" settles whether a cheaper embedding model is worth anything
+    in about four seconds, and it is the same table that shows a cache working.
+    """
+    grouped: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for stage in stages:
+        grouped[str(stage.get("stage", "?"))].append(stage)
+
+    rows = {}
+    for name, entries in grouped.items():
+        durations = [float(e.get("duration_ms", 0) or 0) for e in entries]
+        costs = [float(e.get("stage_cost_usd", 0) or 0) for e in entries]
+        rows[name] = {
+            "runs": len(entries),
+            "duration_mean_ms": sum(durations) / len(durations) if durations else 0.0,
+            "cost_total_usd": sum(costs),
+            "cost_mean_usd": sum(costs) / len(costs) if costs else 0.0,
+        }
+    return dict(sorted(rows.items(), key=lambda kv: -kv[1]["cost_total_usd"]))
+
+
+def check_alerts(
+    report: dict[str, Any],
+    *,
+    p95_ms: float | None,
+    cost_usd: float | None,
+    error_rate: float | None,
+) -> list[str]:
+    """Threshold alerts. Returns the breaches, empty when all is well.
+
+    Thresholds, not anomaly detection, on purpose. A number you chose and wrote
+    down is a number you can argue about in a review; a model that decides what
+    "unusual" means is one more thing that can be quietly wrong, and nobody ever
+    audits it.
+    """
+    overall = report["overall"]
+    breaches: list[str] = []
+    if p95_ms is not None and overall["latency_p95_ms"] > p95_ms:
+        breaches.append(
+            f"p95 latency {overall['latency_p95_ms'] / 1000:.1f}s exceeds "
+            f"{p95_ms / 1000:.1f}s"
+        )
+    if cost_usd is not None and overall["cost_mean_usd"] > cost_usd:
+        breaches.append(
+            f"cost per request ${overall['cost_mean_usd']:.4f} exceeds ${cost_usd:.4f}"
+        )
+    if error_rate is not None and overall["error_rate"] > error_rate:
+        breaches.append(
+            f"error rate {overall['error_rate'] * 100:.1f}% exceeds {error_rate * 100:.1f}%"
+        )
+    return breaches
 
 
 def render_terminal(report: dict[str, Any]) -> str:
@@ -156,6 +232,7 @@ def render_terminal(report: dict[str, Any]) -> str:
         f"{DIM}({overall['errors']} non-2xx){RESET}",
         f"  latency mean      {overall['latency_mean_ms'] / 1000:.2f}s",
         f"  latency p95       {overall['latency_p95_ms'] / 1000:.2f}s",
+        f"  abstention rate   {overall['abstention_rate'] * 100:.1f}%",
         f"  cost / request    ${overall['cost_mean_usd']:.4f}",
         f"  cost total        ${overall['cost_total_usd']:.4f} "
         f"{DIM}({overall['tokens_total']:,} tokens over {overall['llm_calls']} LLM calls){RESET}",
@@ -168,6 +245,25 @@ def render_terminal(report: dict[str, Any]) -> str:
             f"{row['latency_mean_ms'] / 1000:7.2f}s {row['latency_p95_ms'] / 1000:7.2f}s "
             f"${row['cost_mean_usd']:8.4f}"
         )
+
+    if report.get("by_variant"):
+        lines += ["", f"{DIM}  A/B (assigned traffic only){RESET}",
+                  f"{DIM}  {'variant':10s} {'reqs':>5s} {'p95':>8s} {'$/req':>9s} "
+                  f"{'abstain':>8s}{RESET}"]
+        for variant, row in report["by_variant"].items():
+            lines.append(
+                f"  {variant:10s} {row['requests']:5d} {row['latency_p95_ms'] / 1000:7.2f}s "
+                f"${row['cost_mean_usd']:8.4f} {row['abstention_rate'] * 100:7.0f}%"
+            )
+
+    if report.get("by_stage"):
+        lines += ["", f"{DIM}  where the money goes{RESET}",
+                  f"{DIM}  {'stage':22s} {'runs':>5s} {'mean':>8s} {'$ total':>9s}{RESET}"]
+        for stage, row in report["by_stage"].items():
+            lines.append(
+                f"  {stage:22s} {row['runs']:5d} {row['duration_mean_ms'] / 1000:7.2f}s "
+                f"${row['cost_total_usd']:8.4f}"
+            )
     return "\n".join(lines)
 
 
@@ -283,6 +379,13 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--log-file", default=None, help="Log file (default: stdin)")
     parser.add_argument("--html", default=None, help="Also write a self-contained HTML dashboard")
     parser.add_argument("--json", default=None, help="Also write the aggregates as JSON")
+    # Alert thresholds. Absent = that signal is not watched. A breach exits 1 so
+    # this doubles as an operational check in cron or a runbook, without dragging
+    # in a monitoring stack to answer three questions.
+    parser.add_argument("--alert-p95-ms", type=float, default=None)
+    parser.add_argument("--alert-cost-usd", type=float, default=None)
+    parser.add_argument("--alert-error-rate", type=float, default=None,
+                        help="Fraction, e.g. 0.05 for 5%%")
     args = parser.parse_args(argv)
 
     if args.log_file:
@@ -290,7 +393,7 @@ def main(argv: list[str] | None = None) -> int:
     else:
         lines = sys.stdin.read().splitlines()
 
-    report = aggregate(parse_events(lines))
+    report = aggregate(parse_events(lines), parse_events(lines, STAGE_EVENT))
     print(render_terminal(report))
 
     if args.html:
@@ -303,6 +406,18 @@ def main(argv: list[str] | None = None) -> int:
         out.parent.mkdir(parents=True, exist_ok=True)
         out.write_text(json.dumps(report, indent=2), encoding="utf-8")
         print(f"{DIM}aggregates → {out}{RESET}")
+
+    breaches = check_alerts(
+        report,
+        p95_ms=args.alert_p95_ms,
+        cost_usd=args.alert_cost_usd,
+        error_rate=args.alert_error_rate,
+    )
+    if breaches:
+        print(f"\n{RED}ALERT{RESET}")
+        for breach in breaches:
+            print(f"  {RED}·{RESET} {breach}")
+        return 1
     return 0
 
 
