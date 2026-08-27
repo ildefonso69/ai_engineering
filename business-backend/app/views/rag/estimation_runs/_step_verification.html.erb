@@ -16,6 +16,12 @@
     <%= link_to "Horas por tarea", rag_estimation_run_path(run, step: "hours"), class: "underline font-bold" %>.
   </div>
 <% else %>
+  <%# Session 16 · the same verdict carried forward from the hours step. It is
+      repeated here on purpose: this is the screen where the reviewer can actually
+      act on it, and a warning they only saw two clicks ago is a warning nobody
+      saw. It judges the AI's proposal, not the numbers being edited below. %>
+  <%= render "rag/shared/review_banner", subject: run.task_hours_view %>
+
   <% if run.confirmed? %>
     <div class="p-3 rounded-md bg-success/15 border border-success/40 text-success-light text-sm mb-5">
       ✓ Confirmada el <%= run.adjusted_breakdown["confirmed_at"] %> ·

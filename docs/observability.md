@@ -83,6 +83,30 @@ docker compose logs --no-log-prefix ai-service | python3 ai-service/eval/dashboa
 ... | python3 ai-service/eval/dashboard.py --html dashboard.html --json dashboard.json
 ```
 
+### El panel dentro del producto
+
+El HTML generado se sirve en `GET /api/v1/eval/dashboard` (`app/api/eval_reports.py`)
+y el backend de negocio lo publica en **`/rag/dashboard`**, embebido en un iframe
+para que conserve su propio documento y su propia paleta. Desde la Sesión 15 el
+servicio IA no publica puerto alguno, así que ese es el único camino de entrada —
+y por eso mismo la ruta **no** está exenta del `X-Service-Token`: latencia, coste
+y tasa de error por endpoint son un perfil operativo, no una página pública.
+
+No se genera al abrir la página: un contenedor no puede leer su propio log de
+Docker. Los logs salen del host y entran por `stdin` al generador que corre dentro
+del contenedor, que escribe en el volumen `eval_reports` (declarado en
+`docker-compose.prod.yml`, para que el panel sobreviva a los redespliegues):
+
+```bash
+# en la instancia
+cd /opt/estimator && bash scripts/refresh_dashboard.sh     # logs reales
+bash scripts/refresh_dashboard.sh --sample                 # el log de muestra del repo
+```
+
+Aviso para una demo: el HTML sólo pinta las cuatro tarjetas, el sparkline y la
+tabla por endpoint. El desglose **por tramo** y el **A/B** viven únicamente en la
+salida de terminal (`render_terminal`), así que esos dos se enseñan en la consola.
+
 ---
 
 ## Alertas

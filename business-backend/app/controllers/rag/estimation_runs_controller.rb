@@ -12,7 +12,11 @@ module Rag
     GENERATE_TIMEOUT_SECONDS = 300
 
     def index
-      @runs = Rag::EstimationRun.order(created_at: :desc).limit(20)
+      # Session 16 — same filter as the graph listing: ``?review=1``.
+      @review_only = params[:review] == "1"
+      scope = @review_only ? Rag::EstimationRun.needs_review : Rag::EstimationRun.all
+      @runs = scope.recent.limit(20)
+      @review_count = Rag::EstimationRun.needs_review.count
     end
 
     def new
@@ -99,6 +103,10 @@ module Rag
           status: "hours_estimated",
           current_step: "hours"
         )
+        # Session 16 — mirror the AI service's verdict into the column the listing
+        # filters on. Right after the hours land, because that payload is where the
+        # verdict travels.
+        @run.sync_review_flag!
         redirect_to rag_estimation_run_path(@run, step: "hours"),
                     notice: "Horas estimadas (determinista + recuperación del agente)."
       end

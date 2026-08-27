@@ -62,6 +62,12 @@ Rails.application.routes.draw do
         post :resume # the reviewer's decision: approve / adjust / reject
       end
     end
+
+    # Session 16 — the AI service's production-signals panel, published here
+    # because since Session 15 that service has no port of its own. ``#raw`` is
+    # what the iframe on ``#show`` loads.
+    get "dashboard", to: "dashboard#show", as: :dashboard
+    get "dashboard/raw", to: "dashboard#raw", as: :dashboard_raw
   end
 
   # Session 12 — agents console: named, personalizable profiles for the

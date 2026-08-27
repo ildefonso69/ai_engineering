@@ -21,6 +21,12 @@ module Rag
     validates :transcript, presence: true
     validates :estimation_id, presence: true, uniqueness: true
 
+    scope :recent, -> { order(created_at: :desc) }
+    # Session 16 — the review queue. A scope over a real column (not a JSONB
+    # lookup) because this is what the listing filters on; see the migration for
+    # why the flag was promoted out of the document.
+    scope :needs_review, -> { where(requires_human_review: true) }
+
     # The graph is executing a leg in the background (between two gates); the show
     # page renders the live per-agent panel and polls #progress until it pauses/ends.
     def running? = graph_state == "running"
@@ -51,6 +57,14 @@ module Rag
 
     def analysis_report? = analysis_report.present? && analysis_report["summary"].present?
 
+    # Session 16 — the deterministic output guardrail's verdict, as produced by the
+    # AI service. The platform ROUTES on this; it never re-derives it. Deciding it
+    # again here would give two answers to one question, and the one in the audit
+    # log would be the other one.
+    def needs_review? = requires_human_review
+
+    def review_reasons = Array(estimate["review_reasons"])
+
     def proposal? = proposal.present?
 
     # Merge a GraphRunState (from the service IA) into this row. One mapping used by
@@ -69,7 +83,13 @@ module Rag
         estimate: run_state["estimate"] || estimate,
         analysis_report: run_state["analysis_report"] || analysis_report,
         task_hours: { "tasks" => run_state["task_hours"] || task_hours["tasks"] || [] },
-        proposal: run_state["proposal"] || proposal
+        proposal: run_state["proposal"] || proposal,
+        # Mirrored out of the estimate JSONB into its own column so the listing can
+        # find it. THE only writer — the flag is derived data, and derived data with
+        # two writers drifts. Recomputed on every state we receive, including the
+        # one after gate 2, where the human may have just cleared the condition.
+        requires_human_review: (run_state["estimate"] || estimate)
+          .to_h.stringify_keys["requires_human_review"].present?
       )
       save!
     end

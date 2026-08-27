@@ -147,6 +147,14 @@ services:
       # false en todas menos una: no quieres dos procesos migrando a la vez.
       RUN_MIGRATIONS: "true"
 
+    volumes:
+      # El panel de señales (Sesión 16) se REGENERA en la instancia a partir de
+      # los logs reales (scripts/refresh_dashboard.sh). Sin este volumen viviría
+      # en la capa escribible del contenedor y cada redespliegue lo devolvería al
+      # snapshot que venga dentro de la imagen — el mismo fallo que tenía Active
+      # Storage, y con el mismo síntoma: "juraría que ayer estaba actualizado".
+      - eval_reports:/app/eval/reports
+
     logging:
       driver: json-file
       options: { max-size: "10m", max-file: "3" }
@@ -191,3 +199,4 @@ volumes:
   caddy_data:
   caddy_config:
   active_storage:
+  eval_reports:

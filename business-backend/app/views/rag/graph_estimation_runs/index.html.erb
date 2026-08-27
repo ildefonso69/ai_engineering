@@ -1,14 +1,47 @@
 <% content_for :title, "Grafo de agentes · histórico" %>
 
 <div class="max-w-4xl mx-auto px-4 py-10">
-  <div class="flex items-center justify-between mb-6">
+  <div class="flex items-center justify-between mb-2">
     <h1 class="text-3xl font-bold tracking-tighter text-white">Estimaciones por grafo de agentes</h1>
     <%= link_to "Nueva ejecución", new_rag_graph_estimation_run_path,
           class: "inline-flex items-center px-4 py-2 bg-brand text-ink-dark font-bold tracking-tight rounded-md hover:bg-brand-strong transition-colors text-sm" %>
   </div>
+  <p class="text-white/50 text-sm mb-6">
+    Cada ejecución la conduce el grafo multi-agente del servicio IA y se detiene en dos puertas
+    humanas. Las marcadas en ámbar las ha señalado el
+    <span class="text-white/80">guardarraíl determinista de salida</span>: se entregaron igual,
+    pero conviene que las mire una persona.
+  </p>
+
+  <%# Session 16 · the review queue as a filter, not a separate screen. The gate is
+      conditional — most runs never trip it — so a permanent "inbox" tab would be
+      empty most of the time and stop being looked at. %>
+  <div class="flex flex-wrap items-center gap-2 mb-6 text-xs">
+    <% if @review_only %>
+      <span class="px-3 py-1.5 rounded-md bg-warning/15 border border-warning/40 text-warning font-bold">
+        ⚠ Necesitan revisión (<%= @review_count %>)
+      </span>
+      <%= link_to "Ver todas", rag_graph_estimation_runs_path,
+            class: "px-3 py-1.5 rounded-md bg-ink/40 border border-white/10 text-white/70 font-bold hover:text-white" %>
+    <% elsif @review_count.positive? %>
+      <%= link_to "⚠ Necesitan revisión (#{@review_count})", rag_graph_estimation_runs_path(review: 1),
+            class: "px-3 py-1.5 rounded-md bg-warning/15 border border-warning/40 text-warning font-bold hover:bg-warning/25 transition-colors" %>
+    <% else %>
+      <span class="px-3 py-1.5 rounded-md bg-success/15 border border-success/40 text-success-light font-bold">
+        ✓ Ninguna pendiente de revisión
+      </span>
+    <% end %>
+  </div>
 
   <% if @runs.empty? %>
-    <p class="text-white/50">Aún no hay ejecuciones. Empieza una nueva.</p>
+    <p class="text-white/50">
+      <% if @review_only %>
+        Ninguna ejecución marcada para revisión.
+        <%= link_to "Ver todas", rag_graph_estimation_runs_path, class: "underline font-bold" %>.
+      <% else %>
+        Aún no hay ejecuciones. Empieza una nueva.
+      <% end %>
+    </p>
   <% else %>
     <div class="rounded-md border border-white/10 overflow-hidden">
       <table class="w-full text-sm">
@@ -17,6 +50,7 @@
             <th class="text-left p-3 font-bold tracking-tight">#</th>
             <th class="text-left p-3 font-bold tracking-tight">Estado del grafo</th>
             <th class="text-left p-3 font-bold tracking-tight">Puerta / status</th>
+            <th class="text-left p-3 font-bold tracking-tight">Revisión</th>
             <th class="text-right p-3 font-bold tracking-tight">Creada</th>
           </tr>
         </thead>
@@ -32,6 +66,21 @@
                 </span>
               </td>
               <td class="p-3 text-white/70"><%= run.current_gate || run.status || "—" %></td>
+              <td class="p-3">
+                <% if run.needs_review? %>
+                  <%# The row says WHICH one; the detail page says why in full. The
+                      first reason fits here and is usually the decisive one. %>
+                  <span class="px-2.5 py-0.5 rounded-md text-xs font-bold bg-warning/15 border border-warning/40 text-warning"
+                        title="<%= run.review_reasons.join(" · ") %>">
+                    ⚠ revisión
+                  </span>
+                  <span class="block mt-1 text-xs text-white/40 truncate max-w-xs">
+                    <%= run.review_reasons.first %>
+                  </span>
+                <% else %>
+                  <span class="text-white/30">—</span>
+                <% end %>
+              </td>
               <td class="p-3 text-right text-white/50"><%= run.created_at&.strftime("%d/%m %H:%M") %></td>
             </tr>
           <% end %>

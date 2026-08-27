@@ -294,4 +294,73 @@ class RagGraphEstimationRunsControllerTest < ActionDispatch::IntegrationTest
     assert_redirected_to rag_graph_estimation_run_path(run)
     assert_match(/guardarra/i, flash[:alert])
   end
+
+  # --- Session 16: locating the runs a person should look at ------------------
+  #
+  # These are the render assertions that were missing. The banner partial guards
+  # on ``respond_to?(:needs_review?)``, so when it was handed a raw Hash it simply
+  # rendered nothing — a silent no-op that no model test could catch.
+
+  def flagged_run(reason: "3 of 4 tasks have no hours behind them")
+    Rag::GraphEstimationRun.create!(
+      transcript: "x" * 150, estimation_id: SecureRandom.uuid,
+      graph_state: "completed", status: "needs_review",
+      requires_human_review: true,
+      estimate: { "modules" => [ { "name" => "Backend", "tasks" => [ { "name" => "API", "estimated_hours" => 40, "has_match" => true } ] } ],
+                  "total_engineer_days" => 300, "total_engineer_hours" => 2400.0, "confidence" => "medium",
+                  "requires_human_review" => true, "review_reasons" => [ reason ] }
+    )
+  end
+
+  test "the listing badges the runs that need review" do
+    flagged = flagged_run
+    clean = completed_run
+
+    get rag_graph_estimation_runs_path
+
+    assert_response :success
+    assert_select "tr", minimum: 2
+    assert_match(/revisi\u00f3n/i, response.body)
+    assert_match(/3 of 4 tasks have no hours behind them/, response.body)
+    assert_select "a[href=?]", rag_graph_estimation_run_path(flagged)
+    assert_select "a[href=?]", rag_graph_estimation_run_path(clean)
+  end
+
+  test "the review filter narrows the listing to the flagged runs" do
+    flagged = flagged_run
+    clean = completed_run
+
+    get rag_graph_estimation_runs_path(review: 1)
+
+    assert_response :success
+    assert_select "a[href=?]", rag_graph_estimation_run_path(flagged)
+    assert_select "a[href=?]", rag_graph_estimation_run_path(clean), false
+  end
+
+  test "the review counter counts the whole table, not the page" do
+    25.times { flagged_run }
+
+    get rag_graph_estimation_runs_path
+
+    # 20 rows are listed; the badge must still say 25, or it tells you nothing
+    # you could not already see.
+    assert_match(/Necesitan revisi\u00f3n \(25\)/, response.body)
+  end
+
+  test "the completed screen explains why the run was flagged" do
+    run = flagged_run(reason: "total of 300 engineer-days is 9.2x the evidence")
+
+    get rag_graph_estimation_run_path(run)
+
+    assert_response :success
+    assert_match(/necesita revisi\u00f3n humana/i, response.body)
+    assert_match(/9\.2x the evidence/, response.body)
+  end
+
+  test "a clean completed run shows no banner" do
+    get rag_graph_estimation_run_path(completed_run)
+
+    assert_response :success
+    assert_no_match(/necesita revisi\u00f3n humana/i, response.body)
+  end
 end

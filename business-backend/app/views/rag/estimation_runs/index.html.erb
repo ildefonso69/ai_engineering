@@ -8,7 +8,14 @@
   </div>
 
   <% if @runs.empty? %>
-    <p class="text-white/50">Aún no hay ejecuciones. Empieza una nueva.</p>
+    <p class="text-white/50">
+      <% if @review_only %>
+        Ninguna ejecución marcada para revisión.
+        <%= link_to "Ver todas", rag_estimation_runs_path, class: "underline font-bold" %>.
+      <% else %>
+        Aún no hay ejecuciones. Empieza una nueva.
+      <% end %>
+    </p>
   <% else %>
     <%# Session 11 · monitor ligero de calidad: el embudo del pipeline sobre las
         últimas ejecuciones. Sin coste de LLM — sólo lee el estado persistido. %>
@@ -24,6 +31,18 @@
       <span class="px-3 py-1.5 rounded-md bg-ink/40 border border-white/10 text-white/70">
         <%= by_status.fetch("generated", 0) + by_status.fetch("reformulated", 0) %> en curso
       </span>
+      <%# Session 16 · el guardarraíl determinista sobre las horas derivadas. El
+          contador va sobre TODA la tabla, no sobre las 20 de arriba. %>
+      <% if @review_only %>
+        <span class="px-3 py-1.5 rounded-md bg-warning/15 border border-warning/40 text-warning font-bold">
+          ⚠ Necesitan revisión (<%= @review_count %>)
+        </span>
+        <%= link_to "Ver todas", rag_estimation_runs_path,
+              class: "px-3 py-1.5 rounded-md bg-ink/40 border border-white/10 text-white/70 font-bold hover:text-white" %>
+      <% elsif @review_count.to_i.positive? %>
+        <%= link_to "⚠ Necesitan revisión (#{@review_count})", rag_estimation_runs_path(review: 1),
+              class: "px-3 py-1.5 rounded-md bg-warning/15 border border-warning/40 text-warning font-bold hover:bg-warning/25 transition-colors" %>
+      <% end %>
     </div>
 
     <div class="rounded-md border border-white/10 overflow-hidden">
@@ -45,6 +64,11 @@
               <td class="p-3 text-white/80"><%= truncate(run.transcript, length: 80) %></td>
               <td class="p-3">
                 <span class="inline-block bg-ink/60 text-white/80 rounded px-2 py-0.5 text-xs"><%= run.status %></span>
+                <% if run.requires_human_review %>
+                  <span class="ml-1.5 inline-block px-2 py-0.5 rounded-md text-xs font-bold bg-warning/15 border border-warning/40 text-warning">
+                    ⚠ revisión
+                  </span>
+                <% end %>
               </td>
               <td class="p-3 text-right text-white/50 tabular-nums"><%= run.created_at.strftime("%Y-%m-%d %H:%M") %></td>
             </tr>

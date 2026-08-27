@@ -16,6 +16,14 @@
   --color-danger:        #E5484D;
   --color-danger-light:  #FF9592;
 
+  /* Session 16. The supervisor inbox (S14) already styled its badges with
+     `bg-warning/15`, `border-warning/40` and `text-warning` -- but the token was
+     never defined, so Tailwind v4 generated none of those utilities and the
+     "esperando revisión" chip has been rendering colourless ever since. Defining
+     it here lights up that inbox as well as the new review badges. */
+  --color-warning:       #D97706;
+  --color-warning-light: #FBBF24;
+
   --font-sans: "Helvetica", "Arial", sans-serif;
 
   --tracking-tight:   -0.02em;

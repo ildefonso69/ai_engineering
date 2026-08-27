@@ -37,12 +37,18 @@
                 class: "font-bold tracking-tight hover:text-white #{controller_name == 'chunking_comparisons' ? 'text-brand' : 'text-white/80'}" %>
           <%= link_to "RAG Wizard", new_rag_estimation_run_path,
                 class: "font-bold tracking-tight hover:text-white #{controller_name == 'estimation_runs' ? 'text-brand' : 'text-white/80'}" %>
-          <%= link_to "Grafo", new_rag_graph_estimation_run_path,
+          <%# Session 16 · el listado, no el formulario. Desde el histórico se ve qué
+              estimaciones han quedado marcadas para revisión, y el botón «Nueva
+              ejecución» lanza una desde ahí. Antes este enlace iba a #new y el
+              histórico sólo se alcanzaba rebotando desde el detalle de una ejecución. %>
+          <%= link_to "Grafo", rag_graph_estimation_runs_path,
                 class: "font-bold tracking-tight hover:text-white #{controller_name == 'graph_estimation_runs' ? 'text-brand' : 'text-white/80'}" %>
           <%= link_to "Agentes", agents_profiles_path,
                 class: "font-bold tracking-tight hover:text-white #{controller_path == 'agents/profiles' ? 'text-brand' : 'text-white/80'}" %>
           <%= link_to "Ajustes", ai_settings_path,
                 class: "font-bold tracking-tight hover:text-white #{controller_name == 'ai_settings' ? 'text-brand' : 'text-white/80'}" %>
+          <%= link_to "Señales", rag_dashboard_path,
+                class: "font-bold tracking-tight hover:text-white #{controller_name == 'dashboard' ? 'text-brand' : 'text-white/80'}" %>
           <%# Active primary model, always visible during live sessions. Hidden when the service is down. %>
           <% if (active_model = current_primary_model) %>
             <span class="px-2 py-0.5 rounded bg-brand/20 text-brand text-xs font-bold tracking-tight font-mono"

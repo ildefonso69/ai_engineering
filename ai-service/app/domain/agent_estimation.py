@@ -37,7 +37,11 @@ from app.generation.rag.schemas import (
     TaskItem,
     WorkModule,
 )
-from app.generation.rag.task_hours import distance_weighted_consensus, estimate_all
+from app.generation.rag.task_hours import (
+    build_result,
+    distance_weighted_consensus,
+    estimate_all,
+)
 
 log = structlog.get_logger()
 
@@ -140,9 +144,7 @@ async def agent_estimate_task_hours(
 
     flagged: list[AgentTaskRef] = []
     reasons: dict[tuple[str, str], str] = {}
-    descriptions = {
-        (m.name, t.name): t.description for m in modules for t in m.tasks
-    }
+    descriptions = {(m.name, t.name): t.description for m in modules for t in m.tasks}
     for est in base.tasks:
         reason = _flag_reason(est)
         if reason is None:
@@ -161,7 +163,7 @@ async def agent_estimate_task_hours(
     if not flagged or client is None:
         # Nothing to recover (or no client): return the deterministic result with an
         # empty-step trace so the wizard can say "no recovery was needed".
-        return TaskHoursResult(tasks=base.tasks, agent_trace=AgentTrace())
+        return build_result(base.tasks, agent_trace=AgentTrace())
 
     log.info("agent_hours_recovery_flagged", flagged=len(flagged), total=len(base.tasks))
     run = await run_task_hours_recovery_agent(
@@ -177,7 +179,9 @@ async def agent_estimate_task_hours(
 
     # Merge: overwrite only the tasks the agent actually grounded.
     recovered = {
-        (d.module, d.task): d for d in run.derivations if d.has_match and d.estimated_hours is not None
+        (d.module, d.task): d
+        for d in run.derivations
+        if d.has_match and d.estimated_hours is not None
     }
     merged: list[TaskHoursEstimate] = []
     for est in base.tasks:
@@ -203,4 +207,7 @@ async def agent_estimate_task_hours(
         recovered=len(recovered),
         stopped_reason=run.stopped_reason,
     )
-    return TaskHoursResult(tasks=merged, agent_trace=run.trace)
+    # Rebuilt through ``build_result`` rather than patched: recovery changed the
+    # hours, so the guardrail must be re-run over the merged numbers, not carried
+    # over from ``base``.
+    return build_result(merged, agent_trace=run.trace)

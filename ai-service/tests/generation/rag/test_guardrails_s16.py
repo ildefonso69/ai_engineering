@@ -25,9 +25,19 @@ from app.foundation.guardrails.input import (
 from app.generation.rag.guardrails import (
     bounds_for,
     evidence_hours,
+    neighbor_evidence_hours,
     review_reasons_for_estimate,
+    review_reasons_for_task_hours,
 )
-from app.generation.rag.schemas import Estimate, RetrievedChunk, SourceReference, TaskItem, WorkModule
+from app.generation.rag.schemas import (
+    Estimate,
+    RetrievedChunk,
+    SourceReference,
+    TaskHoursEstimate,
+    TaskItem,
+    TaskNeighbor,
+    WorkModule,
+)
 
 # The distinct chunks the retriever put in front of the model on that run:
 # 613 hours ≈ 77 engineer-days.
@@ -225,3 +235,124 @@ def test_an_iban_also_trips_the_phone_pattern():
     reading the kinds list should know the two are not independent.
     """
     assert find_pii("ES9121000418450200051332") == ["iban", "phone"]
+
+
+# --------------------------------------------------------------------------- #
+# The same guardrail over the DERIVED path (wizard + graph)
+#
+# Here the hours are not invented by the model, they are a consensus over the
+# nearest historical tasks. So the ratio measures something else — how many times
+# the same analog was reused — and these tests are mostly about not letting the
+# denominator lie.
+# --------------------------------------------------------------------------- #
+
+
+def _task(
+    name: str,
+    hours: int | None,
+    *,
+    module: str = "Backend",
+    neighbors: list[tuple[int, int]] | None = None,
+) -> TaskHoursEstimate:
+    """One per-task row. ``neighbors`` is [(source_id, estimated_hours), ...]."""
+    return TaskHoursEstimate(
+        module=module,
+        task=name,
+        estimated_hours=hours,
+        reliability=None if hours is None else 0.8,
+        has_match=hours is not None,
+        neighbors=[
+            TaskNeighbor(source_id=sid, estimated_hours=h, distance=0.2)
+            for sid, h in (neighbors or [])
+        ],
+    )
+
+
+def test_evidence_counts_each_neighbour_once_across_every_task():
+    """The bug that would make this guardrail incapable of ever firing.
+
+    One historical component matched by three tasks is one piece of evidence. If
+    it were counted per task, the denominator would grow with the size of the
+    decomposition — which is exactly the quantity the ratio is trying to measure,
+    so a wide breakdown could never look wide.
+    """
+    tasks = [
+        _task("a", 40, neighbors=[(7, 150)]),
+        _task("b", 32, neighbors=[(7, 150)]),
+        _task("c", 24, neighbors=[(7, 150), (9, 40)]),
+    ]
+    assert sorted(neighbor_evidence_hours(tasks)) == [40, 150]
+
+
+def test_hours_become_days_exactly_once():
+    tasks = [_task("a", 40, neighbors=[(1, 40)]), _task("b", 24, neighbors=[(2, 24)])]
+    _reasons, verdict = review_reasons_for_task_hours(tasks)
+    assert verdict.total_engineer_days == 8  # (40 + 24) / 8
+
+
+def test_a_wide_decomposition_over_a_thin_corpus_asks_for_a_person():
+    """60 tasks, all leaning on the same two historical components.
+
+    Every individual number is defensible — each came from its own neighbours —
+    and the total still is not, because the same two analogs are doing all the
+    work. The reason must say THAT, not "the model made the number up".
+    """
+    tasks = [_task(f"task {i}", 40, neighbors=[(1, 150), (2, 110)]) for i in range(60)]
+    reasons, verdict = review_reasons_for_task_hours(tasks)
+
+    assert verdict.ok is False
+    assert any("distinct historical analogs" in r for r in reasons)
+    # 2400h = 300 days over 260h = 32.5 days of evidence.
+    assert verdict.ratio is not None and verdict.ratio > 6.0
+
+
+def test_a_proportionate_breakdown_is_not_escalated():
+    tasks = [
+        _task(f"task {i}", 40, neighbors=[(i, 150)]) for i in range(6)
+    ]
+    assert review_reasons_for_task_hours(tasks)[0] == []
+
+
+def test_most_tasks_without_an_analog_ask_for_a_person():
+    tasks = [_task("grounded", 40, neighbors=[(1, 40)])] + [
+        _task(f"unmatched {i}", None) for i in range(3)
+    ]
+    reasons, _verdict = review_reasons_for_task_hours(tasks)
+    assert any("no historical analog behind them" in r for r in reasons)
+
+
+def test_no_hours_derived_at_all_is_an_abstention_not_a_zero():
+    """Nothing matched. That is one finding, and it must not arrive as two.
+
+    Feeding a 0 into the bound would add "0 engineer-days is not a positive
+    number" next to the reason that actually explains it. Two sentences for one
+    fact is how a reviewer learns to skim the list.
+    """
+    tasks = [_task(f"unmatched {i}", None) for i in range(3)]
+    reasons, verdict = review_reasons_for_task_hours(tasks)
+
+    assert verdict.total_engineer_days is None
+    assert reasons == ["3 of 3 tasks have no historical analog behind them"]
+
+
+def test_an_empty_breakdown_is_not_a_review_case():
+    """The wizard has simply not derived anything yet. Silence, not a finding."""
+    reasons, verdict = review_reasons_for_task_hours([])
+    assert reasons == []
+    assert verdict.ok is True
+
+
+def test_the_derived_bound_has_its_own_setting(monkeypatch):
+    """Same arithmetic, separate number — and the number is configuration.
+
+    Sharing ESTIMATE_MAX_EVIDENCE_RATIO would fire on every healthy wide
+    decomposition; this pins that the two knobs are genuinely independent.
+    """
+    settings = get_settings()
+    tasks = [_task(f"task {i}", 40, neighbors=[(1, 150), (2, 110)]) for i in range(60)]
+
+    monkeypatch.setattr(settings, "ESTIMATE_MAX_EVIDENCE_RATIO", 100.0)
+    assert review_reasons_for_task_hours(tasks, settings=settings)[0] != []
+
+    monkeypatch.setattr(settings, "TASK_HOURS_MAX_EVIDENCE_RATIO", 100.0)
+    assert review_reasons_for_task_hours(tasks, settings=settings)[0] == []

@@ -349,6 +349,26 @@ probablemente esté mal al principio. La plataforma Rails **enruta** sobre esa
 marca; no la vuelve a decidir. Si la recalculara habría dos respuestas para una
 pregunta, y la que quedaría en el log de auditoría sería la otra.
 
+### 18b. El mismo guardrail, dos preguntas distintas — y dos umbrales
+
+`/v1/estimate/from-transcript` no es el único sitio donde sale una cifra hacia un
+cliente: el wizard deriva horas por tarea (`/v1/estimate/agent/hours`) y el grafo
+hace lo propio. Ahí el guardrail también corre, reutilizando `check_total_bounds`.
+
+Pero **mide otra cosa**. Donde el modelo inventa el total, la ratio caza una cifra
+fabricada. Donde el total se **deriva** de la evidencia —consenso ponderado sobre
+los vecinos históricos— no puede fabricarse: nunca supera a sus propios vecinos.
+Lo que la ratio detecta entonces es **reutilización de análogos** (60 tareas
+apoyadas en 5 componentes históricos distintos), que es señal legítima pero
+distinta. De ahí un umbral propio, `TASK_HOURS_MAX_EVIDENCE_RATIO` (6.0 frente a
+3.0), y una redacción propia del motivo: un aviso que nombra el fallo equivocado
+enseña al revisor a desconfiar del guardrail entero.
+
+La consecuencia visible: el banner **no** está en el paso «Generación» del wizard.
+Esa pantalla es una descomposición libre sin horas, así que ningún límite puede
+dispararse ahí. Está donde hay números — «Horas por tarea» y «Validación» — y en
+el listado, que es donde una marca sirve para *encontrar* algo.
+
 ## 19. El PII se rechaza en una ruta y se reporta en la otra
 
 `check_input` sigue rechazando datos personales en `/api/v1/estimate`, donde la

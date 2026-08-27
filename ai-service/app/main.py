@@ -9,6 +9,7 @@ from slowapi.errors import RateLimitExceeded
 
 from app.config import get_settings
 from app.api.embeddings import router as embeddings_router
+from app.api.eval_reports import router as eval_reports_router
 from app.api.health import router as health_router
 from app.api.search import router as search_router
 from app.api import config as config_api
@@ -262,6 +263,7 @@ app.include_router(estimate_supervisor_router)
 
 # Session 15 — readiness probe (`/health/ready`). Liveness stays inline below;
 # readiness lives in its own router because it actually touches dependencies.
+app.include_router(eval_reports_router)
 app.include_router(health_router)
 
 

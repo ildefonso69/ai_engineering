@@ -47,7 +47,10 @@
     { "client": "RagEstimateClient", "method": "post", "path": "/v1/estimate/graph/{estimation_id}/proposal" },
     { "client": "RagEstimateClient", "method": "post", "path": "/v1/estimate/supervisor" },
     { "client": "RagEstimateClient", "method": "post", "path": "/v1/estimate/supervisor/{estimation_id}/resume" },
-    { "client": "RagEstimateClient", "method": "get",  "path": "/v1/estimate/supervisor/{estimation_id}/state" }
+    { "client": "RagEstimateClient", "method": "get",  "path": "/v1/estimate/supervisor/{estimation_id}/state" },
+
+    { "client": "EvalClient", "method": "get", "path": "/api/v1/eval/dashboard" },
+    { "client": "EvalClient", "method": "get", "path": "/api/v1/eval/dashboard.json" }
   ],
   "probes": [
     { "consumer": "docker HEALTHCHECK / compose depends_on", "method": "get", "path": "/health", "unauthenticated": true },

@@ -812,6 +812,20 @@ class TaskHoursResult(BaseModel):
         "the tasks the deterministic pass could not ground (None on /tasks/hours; empty-step trace "
         "when nothing needed recovery).",
     )
+    # Session 16: the deterministic output guardrail, over the DERIVED total.
+    # Same field names as ``Estimate`` on purpose — the business backend routes on
+    # one predicate and should not have to know which endpoint produced the
+    # breakdown. Defaults keep every existing client working unchanged.
+    requires_human_review: bool = Field(
+        default=False,
+        description="True when the deterministic guardrail wants a person to look at these "
+        "hours before they leave the building. Never set by the model.",
+    )
+    review_reasons: list[str] = Field(
+        default_factory=list,
+        description="One plain-language sentence per triggered condition. Empty when "
+        "requires_human_review is False.",
+    )
 
 
 # ---------------------------------------------------------------------------

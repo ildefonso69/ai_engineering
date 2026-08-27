@@ -95,13 +95,27 @@ def check_total_bounds(
     evidence_hours: Sequence[int | None],
     *,
     settings: Settings | None = None,
+    max_evidence_ratio: float | None = None,
+    evidence_description: str = "retrieved evidence",
 ) -> BoundsVerdict:
     """Is this total defensible given the evidence that produced it?
 
     ``total_engineer_days`` of ``None`` is an ABSTENTION, and abstention is the
     system working. It passes.
+
+    ``max_evidence_ratio`` and ``evidence_description`` exist because the same
+    arithmetic answers two different questions. Where the model INVENTS the total
+    (``/v1/estimate/from-transcript``) the ratio catches a fabricated number, and
+    the default 3x applies. Where the total is DERIVED from the evidence — the
+    per-task consensus of the wizard and the graph — it cannot be fabricated, and
+    what the ratio really measures is how many times the same historical analog
+    was reused. That is worth flagging too, at a looser bound and in different
+    words: a reason that names the wrong failure teaches the reviewer to distrust
+    the guardrail.
     """
     settings = settings or get_settings()
+    if max_evidence_ratio is None:
+        max_evidence_ratio = settings.ESTIMATE_MAX_EVIDENCE_RATIO
 
     if total_engineer_days is None:
         return BoundsVerdict(ok=True, total_engineer_days=None)
@@ -122,11 +136,11 @@ def check_total_bounds(
     ratio: float | None = None
     if evidence_days > 0:
         ratio = total_engineer_days / evidence_days
-        if ratio > settings.ESTIMATE_MAX_EVIDENCE_RATIO:
+        if ratio > max_evidence_ratio:
             reasons.append(
                 f"total of {total_engineer_days} engineer-days is {ratio:.1f}x the "
-                f"{evidence_days:.0f} engineer-days of retrieved evidence, above the "
-                f"{settings.ESTIMATE_MAX_EVIDENCE_RATIO:.1f}x limit"
+                f"{evidence_days:.0f} engineer-days of {evidence_description}, above the "
+                f"{max_evidence_ratio:.1f}x limit"
             )
     elif total_engineer_days > 0:
         # A number with nothing behind it. Distinct from an implausible number,

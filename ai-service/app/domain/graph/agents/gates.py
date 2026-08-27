@@ -78,9 +78,18 @@ async def human_gate_analysis(state: dict) -> dict:
         # rederive the headline totals so days/ratio/confidence stay consistent with
         # the new hours (e.g. filling a "sin análogo" task raises the grounded ratio).
         if estimate.get("modules"):
-            from app.domain.graph.agents._common import recompute_estimate_totals
+            from app.domain.graph.agents._common import recompute_estimate_totals, review_fields
 
-            estimate = {**estimate, **recompute_estimate_totals(estimate["modules"])}
+            totals = recompute_estimate_totals(estimate["modules"])
+            # The guardrail is re-run, not carried over: the human just changed the
+            # numbers it judges. Filling the unmatched tasks can CLEAR the flag, and
+            # a leftover "needs review" on an estimate a person already fixed is the
+            # fastest way to teach everyone to ignore the banner.
+            estimate = {
+                **estimate,
+                **totals,
+                **review_fields(estimate["modules"], state.get("task_hours") or [], totals),
+            }
         status = "validated" if decision.get("validated") else "needs_review"
         log.info(
             "human_gate_analysis_resumed",

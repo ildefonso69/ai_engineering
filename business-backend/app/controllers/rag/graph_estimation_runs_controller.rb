@@ -15,7 +15,16 @@
 module Rag
   class GraphEstimationRunsController < ApplicationController
     def index
-      @runs = Rag::GraphEstimationRun.order(created_at: :desc).limit(20)
+      # Session 16 — ``?review=1`` narrows the list to the runs the deterministic
+      # guardrail flagged. A filter rather than a separate inbox: the gate is
+      # conditional, so a dedicated screen would be empty most days and stop being
+      # opened, which is the failure mode a review queue can least afford.
+      @review_only = params[:review] == "1"
+      scope = @review_only ? Rag::GraphEstimationRun.needs_review : Rag::GraphEstimationRun.all
+      @runs = scope.recent.limit(20)
+      # Counted over the WHOLE table, not the 20 rows above: a badge that only
+      # counts what is already on screen tells you nothing you cannot see.
+      @review_count = Rag::GraphEstimationRun.needs_review.count
     end
 
     def new

@@ -1,5 +1,6 @@
-<% estimate = run.estimate %>
-<%= render "rag/shared/review_banner", estimate: estimate %>
+<%# The run, not run.estimate: the latter is the raw JSONB hash and answers no
+    predicate, so this render was silently doing nothing. %>
+<%= render "rag/shared/review_banner", subject: run %>
 
 <div class="flex items-center gap-3 mb-5">
   <h2 class="text-lg font-bold tracking-tight text-white">Flujo completado</h2>

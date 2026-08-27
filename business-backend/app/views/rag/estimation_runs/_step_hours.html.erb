@@ -17,6 +17,11 @@
     <%= link_to "Revisión", rag_estimation_run_path(run, step: "review"), class: "underline font-bold" %>.
   </div>
 <% else %>
+  <%# Session 16 · the deterministic guardrail over the DERIVED total. This is the
+      first screen of the wizard that has hours at all, which is why the banner
+      lives here and not in «Generación», where there is no number to bound. %>
+  <%= render "rag/shared/review_banner", subject: hours %>
+
   <div class="flex flex-wrap gap-3 mb-5 text-sm">
     <span class="px-3 py-1.5 rounded-md bg-success/15 border border-success/40 text-success-light font-bold">
       <%= hours.matched_count %> con dato histórico

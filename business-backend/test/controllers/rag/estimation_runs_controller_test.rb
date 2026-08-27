@@ -101,9 +101,13 @@ class RagEstimationRunsControllerTest < ActionDispatch::IntegrationTest
 
   # --- estimate_hours (deterministic per-task search + agent recovery) --------
 
-  def stub_task_hours(tasks:, agent_trace: nil)
+  def stub_task_hours(tasks:, agent_trace: nil, review_reasons: nil)
     body = { tasks: tasks }
     body[:agent_trace] = agent_trace if agent_trace
+    if review_reasons
+      body[:requires_human_review] = true
+      body[:review_reasons] = review_reasons
+    end
     stub_request(:post, %r{/v1/estimate/agent/hours})
       .to_return(status: 200, body: body.to_json,
                  headers: { "Content-Type" => "application/json" })
@@ -300,5 +304,79 @@ class RagEstimationRunsControllerTest < ActionDispatch::IntegrationTest
     get rag_estimation_runs_path
     assert_response :success
     assert_match "Estimaciones guiadas", response.body
+  end
+
+  # --- Session 16: the guardrail verdict, from the payload to the listing ------
+
+  def flagged_hours_run(reason: "8 of 10 tasks have no historical analog behind them")
+    run = Rag::EstimationRun.create!(transcript: "x" * 150,
+      structure: { "modules" => [ { "name" => "Auth", "tasks" => [ { "name" => "OAuth" } ] } ] })
+    stub_task_hours(
+      tasks: [ { module: "Auth", task: "OAuth", estimated_hours: 40, reliability: 0.8, has_match: true } ],
+      review_reasons: [ reason ]
+    )
+    post estimate_hours_rag_estimation_run_path(run),
+         params: { modules: { "0" => { name: "Auth", tasks: { "0" => { name: "OAuth" } } } } }
+    run.reload
+  end
+
+  test "a flagged hours payload lights up the column the listing filters on" do
+    run = flagged_hours_run
+
+    assert run.requires_human_review
+    assert_includes Rag::EstimationRun.needs_review, run
+  end
+
+  test "the hours screen shows the guardrail's reasons" do
+    run = flagged_hours_run(reason: "total of 300 engineer-days is 9.2x the evidence")
+
+    get rag_estimation_run_path(run, step: "hours")
+
+    assert_response :success
+    assert_match(/necesita revisi\u00f3n humana/i, response.body)
+    assert_match(/9\.2x the evidence/, response.body)
+  end
+
+  test "the verification screen repeats the warning where the reviewer can act" do
+    run = flagged_hours_run
+
+    get rag_estimation_run_path(run, step: "verification")
+
+    assert_response :success
+    assert_match(/necesita revisi\u00f3n humana/i, response.body)
+  end
+
+  test "the generation screen never shows the banner" do
+    # The structure step has no hours at all, so no bound can fire there. The
+    # banner used to live on this screen, where it was decoration.
+    run = flagged_hours_run
+    run.update!(generation: { "estimate" => { "modules" => [], "confidence" => "high",
+                                              "requires_human_review" => true,
+                                              "review_reasons" => [ "should not be shown here" ] } })
+
+    get rag_estimation_run_path(run, step: "generation")
+
+    assert_response :success
+    assert_no_match(/should not be shown here/, response.body)
+  end
+
+  test "re-deriving the structure clears a stale review badge" do
+    run = flagged_hours_run
+    assert run.requires_human_review
+
+    run.clear_downstream!("review")
+
+    assert_not run.reload.requires_human_review
+  end
+
+  test "index filters to the runs that need review" do
+    flagged = flagged_hours_run
+    clean = Rag::EstimationRun.create!(transcript: "y" * 150)
+
+    get rag_estimation_runs_path(review: 1)
+
+    assert_response :success
+    assert_select "a[href=?]", rag_estimation_run_path(flagged)
+    assert_select "a[href=?]", rag_estimation_run_path(clean), false
   end
 end

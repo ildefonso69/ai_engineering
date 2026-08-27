@@ -23,6 +23,7 @@ from app.generation.rag.schemas import (
     TaskHoursModuleInput,
     TaskHoursResult,
     TaskHoursTaskInput,
+    TaskNeighbor,
 )
 
 
@@ -161,3 +162,72 @@ async def test_hybrid_keeps_deterministic_when_agent_finds_nothing(monkeypatch):
     by_task = {t.task: t for t in result.tasks}
     assert by_task["RBAC"].has_match is False  # unchanged; no fabricated hours
     assert by_task["RBAC"].estimated_hours is None
+
+
+# --- Session 16: the output guardrail survives the merge -------------------- #
+def _thin_evidence_result() -> TaskHoursResult:
+    """Twelve tasks all leaning on one historical component: flagged by breadth."""
+    return TaskHoursResult(
+        tasks=[
+            TaskHoursEstimate(
+                module="Auth",
+                task=f"task {i}",
+                estimated_hours=40,
+                reliability=0.8,
+                has_match=True,
+                neighbors=[TaskNeighbor(source_id=1, estimated_hours=40, distance=0.2)],
+            )
+            for i in range(12)
+        ]
+    )
+
+
+async def test_the_guardrail_verdict_is_present_when_no_recovery_runs(monkeypatch):
+    async def fake_estimate_all(modules, *, top_k=None, distance_threshold=None):
+        return _thin_evidence_result()
+
+    monkeypatch.setattr(conductor, "estimate_all", fake_estimate_all)
+    result = await agent_estimate_task_hours(_modules(), client=object(), model="gpt-5-mini")
+
+    assert result.requires_human_review is True
+    assert result.review_reasons
+
+
+async def test_the_guardrail_is_re_run_over_the_merged_hours(monkeypatch):
+    """The early return and the post-merge return are two different constructions.
+
+    Both build a fresh ``TaskHoursResult``, so a verdict computed once upstream
+    would be silently dropped by whichever path ran — and it would be dropped at
+    precisely the moment the numbers changed. This pins the second path.
+    """
+
+    async def fake_estimate_all(modules, *, top_k=None, distance_threshold=None):
+        base = _thin_evidence_result()
+        # One task with no match, so recovery actually runs.
+        base.tasks.append(TaskHoursEstimate(module="Auth", task="RBAC", has_match=False))
+        return base
+
+    async def fake_recovery(flagged, **kwargs):
+        return AgentTaskHoursRun(
+            derivations=[
+                AgentTaskDerivation(
+                    module="Auth",
+                    task="RBAC",
+                    estimated_hours=64,
+                    reliability=0.55,
+                    has_match=True,
+                )
+            ],
+            trace=AgentTrace(),
+            iterations=1,
+            stopped_reason="completed",
+        )
+
+    monkeypatch.setattr(conductor, "estimate_all", fake_estimate_all)
+    monkeypatch.setattr(conductor, "run_task_hours_recovery_agent", fake_recovery)
+
+    result = await agent_estimate_task_hours(_modules(), client=object(), model="gpt-5-mini")
+
+    assert {t.task for t in result.tasks} >= {"RBAC"}
+    assert result.requires_human_review is True
+    assert any("distinct historical analogs" in r for r in result.review_reasons)

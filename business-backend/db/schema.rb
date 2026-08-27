@@ -10,7 +10,7 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[8.0].define(version: 2026_07_20_120000) do
+ActiveRecord::Schema[8.0].define(version: 2026_08_27_100000) do
   # These are extensions that must be enabled in order to support this database
   enable_extension "pg_catalog.plpgsql"
 
@@ -92,7 +92,10 @@ ActiveRecord::Schema[8.0].define(version: 2026_07_20_120000) do
     t.datetime "updated_at", null: false
     t.jsonb "structure", default: {}, null: false
     t.jsonb "task_hours", default: {}, null: false
+    t.jsonb "agent_run", default: {}, null: false
+    t.boolean "requires_human_review", default: false, null: false
     t.index ["created_at"], name: "index_estimation_runs_on_created_at"
+    t.index ["requires_human_review"], name: "index_estimation_runs_on_requires_human_review", where: "requires_human_review"
   end
 
   create_table "estimations", force: :cascade do |t|
@@ -125,8 +128,10 @@ ActiveRecord::Schema[8.0].define(version: 2026_07_20_120000) do
     t.datetime "created_at", null: false
     t.datetime "updated_at", null: false
     t.string "proposal_title"
+    t.boolean "requires_human_review", default: false, null: false
     t.index ["created_at"], name: "index_graph_estimation_runs_on_created_at"
     t.index ["estimation_id"], name: "index_graph_estimation_runs_on_estimation_id", unique: true
+    t.index ["requires_human_review"], name: "index_graph_estimation_runs_on_requires_human_review", where: "requires_human_review"
   end
 
   create_table "index_runs", force: :cascade do |t|

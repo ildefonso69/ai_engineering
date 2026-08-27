@@ -35,6 +35,10 @@ module Rag
 
     validates :transcript, presence: true
 
+    scope :recent, -> { order(created_at: :desc) }
+    # Session 16 — the review queue (see the migration for why this is a column).
+    scope :needs_review, -> { where(requires_human_review: true) }
+
     # --- typed views over the per-stage JSONB --------------------------------
 
     def reformulation_view
@@ -85,6 +89,14 @@ module Rag
       Rag::AgentTraceView.from_hash(raw) if raw.present?
     end
 
+    # Session 16 — mirror the guardrail's verdict out of the task_hours JSONB into
+    # its own column, so the listing can find this run. THE only writer: the flag
+    # is derived, and derived data with two writers drifts until nobody trusts the
+    # badge.
+    def sync_review_flag!
+      update!(requires_human_review: task_hours_view&.needs_review? || false)
+    end
+
     # --- wizard state --------------------------------------------------------
 
     def step_complete?(step)
@@ -104,6 +116,9 @@ module Rag
         column = STEP_COLUMNS[step]
         cleared[column] = {} if column && self.class.column_names.include?(column.to_s)
       end
+      # The review flag is derived from task_hours; clearing those without clearing
+      # it would leave a badge pointing at hours that no longer exist.
+      cleared[:requires_human_review] = false if cleared.key?(:task_hours)
       update!(cleared) if cleared.any?
     end
   end

@@ -36,6 +36,7 @@ from app.generation.rag.schemas import (
     TaskHoursResult,
     TaskNeighbor,
 )
+from app.generation.rag.guardrails import review_reasons_for_task_hours
 from app.generation.rag.quality.synthesis import synthesize_range
 
 log = structlog.get_logger()
@@ -182,6 +183,32 @@ async def estimate_one(
     )
 
 
+def build_result(
+    tasks: list[TaskHoursEstimate],
+    *,
+    agent_trace=None,
+) -> TaskHoursResult:
+    """Wrap per-task estimates in the response, running the output guardrail.
+
+    Every path that returns a ``TaskHoursResult`` goes through here — the
+    deterministic one and both of the agent-recovery ones — so the verdict cannot
+    be lost by a code path that builds the response itself. That is not a
+    hypothetical: the recovery path rebuilds the result after merging, and a
+    guardrail computed earlier would be silently dropped at exactly the moment
+    the numbers changed.
+    """
+    settings = get_settings()
+    reasons: list[str] = []
+    if settings.ESTIMATE_BOUNDS_ENABLED:
+        reasons, _verdict = review_reasons_for_task_hours(tasks, settings=settings)
+    return TaskHoursResult(
+        tasks=tasks,
+        agent_trace=agent_trace,
+        requires_human_review=bool(reasons),
+        review_reasons=reasons,
+    )
+
+
 async def estimate_all(
     modules: list[TaskHoursModuleInput],
     *,
@@ -236,4 +263,4 @@ async def estimate_all(
         search_mode=search_mode,
         rerank=rerank,
     )
-    return TaskHoursResult(tasks=list(estimates))
+    return build_result(list(estimates))

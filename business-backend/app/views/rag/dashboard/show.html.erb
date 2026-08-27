@@ -1,0 +1,53 @@
+<% content_for :title, "Señales de producción" %>
+
+<div class="max-w-5xl mx-auto px-4 py-10">
+  <div class="flex items-start justify-between mb-2 gap-4">
+    <h1 class="text-3xl font-bold tracking-tighter text-white">Señales de producción</h1>
+    <%= link_to "Abrir en una pestaña", rag_dashboard_raw_path, target: "_blank", rel: "noopener",
+          class: "shrink-0 inline-flex items-center px-4 py-2 bg-brand text-ink-dark font-bold tracking-tight rounded-md hover:bg-brand-strong transition-colors text-sm" %>
+  </div>
+
+  <p class="text-white/50 text-sm mb-6">
+    Latencia, coste y tasa de error del servicio IA, calculados sobre sus propios
+    <span class="text-white/80">logs estructurados</span> — un evento
+    <code class="text-white/70">request_completed</code> por petición. El conjunto dorado mide la
+    calidad <span class="text-white/80">cuando preguntas</span>; esto mide lo que hace producción
+    <span class="text-white/80">todo el rato</span>.
+    <% if @generated_at.present? %>
+      Última generación: <span class="text-white/80 tabular-nums"><%= @generated_at %></span>.
+    <% end %>
+  </p>
+
+  <% if @error %>
+    <div class="p-4 rounded-md bg-danger/15 border border-danger/50 text-danger text-sm mb-6">
+      No se pudo hablar con el servicio IA: <%= @error %>
+    </div>
+  <% else %>
+    <%# El panel es un documento completo, con su propio `body` y su propia paleta
+        clara/oscura. Va en un iframe para que conserve exactamente el aspecto con
+        el que se genera — el mismo fichero que alguien abre por SSH. %>
+    <div class="rounded-md border border-white/10 overflow-hidden bg-white">
+      <iframe src="<%= rag_dashboard_raw_path %>"
+              title="Panel de señales de producción"
+              class="w-full block"
+              style="height: 78vh; border: 0;"
+              loading="lazy"></iframe>
+    </div>
+  <% end %>
+
+  <details class="mt-6 text-sm text-white/60">
+    <summary class="cursor-pointer font-bold tracking-tight text-white/80">
+      ¿Cómo se actualiza?
+    </summary>
+    <p class="mt-3">
+      No se genera al abrir la página: un contenedor no puede leer su propio log de Docker, así
+      que los logs salen del host y entran por <code>stdin</code> al generador que corre dentro
+      del contenedor. En la instancia:
+    </p>
+    <pre class="mt-3 p-3 rounded-md bg-ink/40 border border-white/10 overflow-x-auto text-xs"><code>cd /opt/estimator && bash scripts/refresh_dashboard.sh</code></pre>
+    <p class="mt-3">
+      Con <code>--sample</code> lo genera sobre el log de muestra del repositorio, que es
+      reproducible pero <span class="text-white/80">no es producción</span>.
+    </p>
+  </details>
+</div>

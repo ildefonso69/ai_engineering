@@ -341,6 +341,14 @@ class Settings(BaseSettings):
     # analogs. It still catches the failure that motivated this guardrail, an 8x
     # hours-as-days conflation (measured: 7.4x on the run that produced it).
     ESTIMATE_MAX_EVIDENCE_RATIO: float = 3.0
+    # The same rule on the paths where the hours are DERIVED from the evidence
+    # (the wizard's per-task consensus and the graph), which is a different
+    # measurement wearing the same arithmetic. There the total cannot exceed its
+    # own neighbours per task, so the ratio no longer catches a hallucinated
+    # number -- it catches breadth: 60 tasks resting on 5 distinct historical
+    # components is a 12x reuse of the same analog. Legitimate signal, looser
+    # bound; sharing the 3x would fire on every healthy wide decomposition.
+    TASK_HOURS_MAX_EVIDENCE_RATIO: float = 6.0
     # Absolute ceiling, ~10 person-years for a single project. Mirrors the 20,000h
     # cap in the Session 12 validate_estimate tool, in days.
     ESTIMATE_MAX_ENGINEER_DAYS: int = 2500
