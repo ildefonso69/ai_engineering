@@ -25,7 +25,7 @@ from typing import Sequence, Union
 
 from alembic import op
 
-revision: str = "0006_session_update_fts_to_spanish"
+revision: str = "0006_fts_spanish"
 down_revision: Union[str, None] = "0005_session11_hnsw_multi_index"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
