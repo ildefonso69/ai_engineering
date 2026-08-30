@@ -12,3 +12,8 @@
 include:
   - estimator/docker-compose.yml
   - estimator-web/docker-compose.yml
+
+services:
+  estimator:
+    env_file:
+      - estimator/.env

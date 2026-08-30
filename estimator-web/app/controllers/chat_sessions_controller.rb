@@ -16,7 +16,7 @@ class ChatSessionsController < ApplicationController
     @latest_metadata = @chat_session.latest_metadata_hash
   rescue EstimatorAi::ServerError, Faraday::ConnectionFailed, Faraday::TimeoutError => e
     flash.now[:alert] = "AI service unavailable: #{e.message}"
-    @chat_session = ChatSession.new
+    @chat_session = ChatSession.create!(remote_session_id: nil)
     @request = Conversation::Request.new
     @latest_estimation = nil
     @latest_metadata = {}
