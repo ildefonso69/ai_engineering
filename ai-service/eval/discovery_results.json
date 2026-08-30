@@ -1,0 +1,102 @@
+{
+  "q1": {
+    "query_text": "Desarrollo de aplicación web e-commerce con pasarela de pagos y carrito de compra",
+    "domain": "Mid-size e-commerce platform with payment integration, user auth, product catalog, and shopping cart. Similar projects: online retail systems.",
+    "chunks": [
+      {
+        "id": 17,
+        "type": "budget_component",
+        "content": "[Project: Headless e-commerce storefront with personalized recommendations]\n[Client sector: ecommerce | Year: 2024 | Main tech: node]\n\nComponent: Cart and checkout service\nDescription: Stateless cart "
+      },
+      {
+        "id": 12,
+        "type": "budget_component",
+        "content": "[Project: Real-time payments gateway with fraud detection and reconciliation]\n[Client sector: finance | Year: 2023 | Main tech: java_spring]\n\nComponent: Merchant dashboard\nDescription: Merchant-facing"
+      },
+      {
+        "id": 58,
+        "type": "budget_component",
+        "content": "[Project: Bare-bones e-commerce MVP scoped in one-line tickets]\n[Client sector: ecommerce | Year: 2024 | Main tech: node]\n\nComponent: Checkout\nDescription: Pay with card.\nTech stack: node\nComplexity: "
+      },
+      {
+        "id": 9,
+        "type": "budget_component",
+        "content": "[Project: Real-time payments gateway with fraud detection and reconciliation]\n[Client sector: finance | Year: 2023 | Main tech: java_spring]\n\nComponent: Payment gateway core\nDescription: High-throughp"
+      },
+      {
+        "id": 19,
+        "type": "budget_component",
+        "content": "[Project: Headless e-commerce storefront with personalized recommendations]\n[Client sector: ecommerce | Year: 2024 | Main tech: node]\n\nComponent: Storefront PWA\nDescription: Progressive web app storef"
+      },
+      {
+        "id": 57,
+        "type": "budget_component",
+        "content": "[Project: Bare-bones e-commerce MVP scoped in one-line tickets]\n[Client sector: ecommerce | Year: 2024 | Main tech: node]\n\nComponent: Cart\nDescription: Add to cart.\nTech stack: node\nComplexity: low\nEs"
+      },
+      {
+        "id": 16,
+        "type": "budget_component",
+        "content": "[Project: Headless e-commerce storefront with personalized recommendations]\n[Client sector: ecommerce | Year: 2024 | Main tech: node]\n\nComponent: Product catalog API\nDescription: GraphQL catalog API w"
+      }
+    ],
+    "chunk_ids": [
+      17,
+      12,
+      58,
+      9,
+      19,
+      57,
+      16
+    ]
+  },
+  "q2": {
+    "query_text": "Sistema de gestión de inventario en tiempo real con reportes y análisis de datos",
+    "domain": "Inventory management system with real-time tracking, reporting, and business analytics dashboard. Domain: supply chain software.",
+    "chunks": [
+      {
+        "id": 49,
+        "type": "budget_component",
+        "content": "[Project: Warehouse management system with automated guided vehicle coordination]\n[Client sector: industrial | Year: 2023 | Main tech: go]\n\nComponent: Operations KPI reporting\nDescription: Throughput,"
+      },
+      {
+        "id": 38,
+        "type": "budget_component",
+        "content": "[Project: Pharmacy inventory and prescription fulfillment system]\n[Client sector: healthcare | Year: 2023 | Main tech: java_spring]\n\nComponent: Inventory and reorder\nDescription: Lot-and-expiry-aware "
+      },
+      {
+        "id": 46,
+        "type": "budget_component",
+        "content": "[Project: Warehouse management system with automated guided vehicle coordination]\n[Client sector: industrial | Year: 2023 | Main tech: go]\n\nComponent: Warehouse management core\nDescription: Inventory,"
+      },
+      {
+        "id": 26,
+        "type": "budget_component",
+        "content": "[Project: Grocery delivery app with slot booking and route optimization]\n[Client sector: ecommerce | Year: 2024 | Main tech: go]\n\nComponent: Real-time inventory sync\nDescription: Near-real-time invent"
+      }
+    ],
+    "chunk_ids": [
+      49,
+      38,
+      46,
+      26
+    ]
+  },
+  "q3": {
+    "query_text": "Aplicación móvil iOS y Android para reservas de servicios profesionales",
+    "domain": "Cross-platform mobile app for booking professional services (cleaners, plumbers, etc). Features: calendar, ratings, payments.",
+    "chunks": [],
+    "chunk_ids": []
+  },
+  "q4": {
+    "query_text": "Portal de gestión documental con OCR, búsqueda full-text y control de acceso basado en roles",
+    "domain": "Document management platform with OCR, full-text search, role-based access control, versioning. Enterprise solution.",
+    "chunks": [],
+    "chunk_ids": []
+  },
+  "q5": {
+    "query_text": "Red social interna con chat en tiempo real, notificaciones push y sincronización offline",
+    "domain": "Internal social network / enterprise chat with real-time messaging, push notifications, and offline-first sync. Mobile + web.",
+    "chunks": [],
+    "chunk_ids": []
+  }
+}

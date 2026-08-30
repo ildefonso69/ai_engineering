@@ -1,0 +1,30 @@
+{
+  "A": {
+    "search_method": "vector",
+    "reranked": false,
+    "mean_precision_at_5": 1.0,
+    "mean_latency_ms": 401.225209236145,
+    "num_queries": 5
+  },
+  "B": {
+    "search_method": "hybrid",
+    "reranked": false,
+    "mean_precision_at_5": 0.0,
+    "mean_latency_ms": 0.0,
+    "num_queries": 5
+  },
+  "C": {
+    "search_method": "vector",
+    "reranked": true,
+    "mean_precision_at_5": 1.0,
+    "mean_latency_ms": 270.84827423095703,
+    "num_queries": 5
+  },
+  "D": {
+    "search_method": "hybrid",
+    "reranked": true,
+    "mean_precision_at_5": 0.0,
+    "mean_latency_ms": 0.0,
+    "num_queries": 5
+  }
+}
