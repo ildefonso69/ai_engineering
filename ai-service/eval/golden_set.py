@@ -29,34 +29,31 @@ GOLDEN_QUERIES = [
         id="q1",
         query_text="Desarrollo de aplicación web e-commerce con pasarela de pagos y carrito de compra",
         description="Mid-size e-commerce platform with payment integration, user auth, product catalog, and shopping cart. Similar projects: online retail systems.",
-        relevant_chunk_ids={
-            # NOTE: Fill with actual chunk IDs from your dataset after first run
-            # These are placeholders; run the discovery script first
-        },
+        relevant_chunk_ids={17, 12, 58, 9, 19, 57, 16},
     ),
     GoldenQuery(
         id="q2",
         query_text="Sistema de gestión de inventario en tiempo real con reportes y análisis de datos",
         description="Inventory management system with real-time tracking, reporting, and business analytics dashboard. Domain: supply chain software.",
-        relevant_chunk_ids={},
+        relevant_chunk_ids={49, 38, 46, 26},
     ),
     GoldenQuery(
         id="q3",
         query_text="Aplicación móvil iOS y Android para reservas de servicios profesionales",
         description="Cross-platform mobile app for booking professional services (cleaners, plumbers, etc). Features: calendar, ratings, payments.",
-        relevant_chunk_ids={},
+        relevant_chunk_ids=set(),
     ),
     GoldenQuery(
         id="q4",
         query_text="Portal de gestión documental con OCR, búsqueda full-text y control de acceso basado en roles",
         description="Document management platform with OCR, full-text search, role-based access control, versioning. Enterprise solution.",
-        relevant_chunk_ids={},
+        relevant_chunk_ids=set(),
     ),
     GoldenQuery(
         id="q5",
         query_text="Red social interna con chat en tiempo real, notificaciones push y sincronización offline",
         description="Internal social network / enterprise chat with real-time messaging, push notifications, and offline-first sync. Mobile + web.",
-        relevant_chunk_ids={},
+        relevant_chunk_ids=set(),
     ),
 ]
 

@@ -22,7 +22,12 @@ import time
 from dataclasses import dataclass, field
 from typing import Optional
 import argparse
-from eval.golden_set import GOLDEN_QUERIES, print_golden_set_summary
+import sys
+import os
+
+# Fix import path
+sys.path.insert(0, os.path.dirname(__file__))
+from golden_set import GOLDEN_QUERIES, print_golden_set_summary
 
 
 @dataclass
@@ -83,9 +88,8 @@ class GoldenSetBenchmark:
         data = response.json()
         latency = (time.time() - start) * 1000
 
-        # Extract chunk IDs from response
-        # Assuming response has {"results": [{"chunk": {"id": ...}, ...}]}
-        chunk_ids = [r["chunk"]["id"] for r in data.get("results", [])]
+        # Extract chunk IDs from response (format: {"chunks": [{"id": ..., ...}]})
+        chunk_ids = [r["id"] for r in data.get("chunks", [])]
         if rerank:
             # TODO: add reranking step here for config C
             pass
@@ -123,10 +127,10 @@ class GoldenSetBenchmark:
 
         for query in GOLDEN_QUERIES:
             if not query.relevant_chunk_ids:
-                print(f"⚠️  Query {query.id} has no ground truth annotations. Skipping...")
+                print(f"SKIP: Query {query.id} has no ground truth annotations. Skipping...")
                 continue
 
-            print(f"\n📊 Evaluating query {query.id}: {query.query_text[:60]}...")
+            print(f"\nEvaluating query {query.id}: {query.query_text[:60]}...")
 
             # Config A: Vector, no rerank
             try:
@@ -221,7 +225,7 @@ async def main():
     benchmark.print_results_table(metrics)
 
     # Save results to JSON
-    results_file = "eval/golden_set_results.json"
+    results_file = os.path.join(os.path.dirname(__file__), "golden_set_results.json")
     results = {
         config: {
             "search_method": m.search_method,
@@ -234,7 +238,7 @@ async def main():
     }
     with open(results_file, "w") as f:
         json.dump(results, f, indent=2)
-    print(f"\n✅ Results saved to {results_file}")
+    print(f"\nResults saved to {results_file}")
 
 
 if __name__ == "__main__":

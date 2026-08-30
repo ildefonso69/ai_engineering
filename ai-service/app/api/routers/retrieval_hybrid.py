@@ -24,7 +24,7 @@ from pydantic import BaseModel, Field
 
 from app.api.rate_limiting import limiter
 from app.api.security import require_retrieval_key
-from app.dependencies import get_embedder, get_engine, get_settings
+from app.dependencies import get_embedder, get_settings
 from app.foundation.reranking import CrossEncoderReranker, DEFAULT_RERANK_MODEL
 from app.generation.rag.errors import RetrievalError
 from app.generation.rag.schemas import RetrievedChunk, RetrievalResult
@@ -34,7 +34,8 @@ from app.generation.rag.store.models import (
     TranscriptChunkRow,
 )
 from app.generation.rag.store.repository import ChunkStore
-from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
+from app.foundation.persistence.database import get_async_session_factory
+from sqlalchemy.ext.asyncio import AsyncSession
 
 log = structlog.get_logger()
 
@@ -134,7 +135,6 @@ async def hybrid_search(
     request: Request,
     _: str = Depends(require_retrieval_key),
     embedder=Depends(get_embedder),
-    engine=Depends(get_engine),
     settings=Depends(get_settings),
 ) -> HybridSearchResponse:
     """Hybrid search: vector k-NN + full-text keyword fused by RRF."""
@@ -158,7 +158,8 @@ async def hybrid_search(
         raise HTTPException(status_code=502, detail="Embedding service unavailable") from e
 
     try:
-        async with AsyncSession(engine) as session:
+        session_factory = get_async_session_factory()
+        async with session_factory() as session:
             store = ChunkStore()
 
             # Recall stage: fetch top-k (or top-50 if reranking is enabled)
