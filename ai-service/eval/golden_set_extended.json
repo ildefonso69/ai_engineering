@@ -1,0 +1,539 @@
+[
+  {
+    "id": "case-001-ecommerce-checkout",
+    "difficulty": "easy",
+    "transcript": "Right, thanks for making the time. We run a mid-sized online shop selling outdoor gear, about forty thousand SKUs, and the checkout is the part that hurts. Today it is a single page that times out under load and we lose carts every weekend. What we want is a rebuilt cart and checkout: saved carts per customer, promotion codes, split shipping when items come from different warehouses, and card plus PayPal. We also want the product search to stop being embarrassing, so faceted search over categories, brand and price. And transactional email for order confirmation and shipping updates. Backend is Node.js and we would like to stay there. No mobile app in this phase, no marketplace, no multi-currency. The team is three engineers plus a part-time designer, and the board wants it live for the autumn season.",
+    "expected_engineer_days": 75,
+    "acceptable_range": [45, 120],
+    "ground_truth": {
+      "total_engineer_days": 72,
+      "duration_weeks": 18,
+      "modules": [
+        {
+          "name": "Cart & Checkout",
+          "description": "Shopping cart persistence, checkout flow, payment integration.",
+          "tasks": [
+            {
+              "name": "Persistent cart storage and recovery",
+              "description": "Save cart state per customer, restore on return.",
+              "engineer_days": 12,
+              "grounded": true,
+              "sources": []
+            },
+            {
+              "name": "Multi-step checkout redesign",
+              "description": "Structured checkout flow with form validation and error handling.",
+              "engineer_days": 10,
+              "grounded": true,
+              "sources": []
+            },
+            {
+              "name": "Promotion code engine",
+              "description": "Code validation, discount calculation, eligibility rules.",
+              "engineer_days": 8,
+              "grounded": true,
+              "sources": []
+            },
+            {
+              "name": "Multi-warehouse split shipping",
+              "description": "Inventory lookup per warehouse, shipping cost aggregation.",
+              "engineer_days": 10,
+              "grounded": true,
+              "sources": []
+            },
+            {
+              "name": "Payment gateway integration",
+              "description": "Card and PayPal processing, PCI compliance.",
+              "engineer_days": 12,
+              "grounded": true,
+              "sources": []
+            }
+          ]
+        },
+        {
+          "name": "Product Catalog & Search",
+          "description": "Faceted search, filtering, indexing.",
+          "tasks": [
+            {
+              "name": "Full-text search indexing",
+              "description": "Build search index over SKU catalog.",
+              "engineer_days": 8,
+              "grounded": true,
+              "sources": []
+            },
+            {
+              "name": "Faceted filtering UI",
+              "description": "Category, brand, price range filters with count updates.",
+              "engineer_days": 6,
+              "grounded": true,
+              "sources": []
+            }
+          ]
+        },
+        {
+          "name": "Transactional Email",
+          "description": "Order confirmation, shipping updates.",
+          "tasks": [
+            {
+              "name": "Email template engine and delivery",
+              "description": "Order confirmation and shipping notification templates.",
+              "engineer_days": 6,
+              "grounded": true,
+              "sources": []
+            }
+          ]
+        }
+      ],
+      "confidence": "high",
+      "reasoning": "Multiple historical e-commerce projects in the corpus with checkout and search rebuilds. The scope aligns with 70-80 engineer-day projects in the retail sector.",
+      "sources": [],
+      "assumptions": [],
+      "requires_human_review": false,
+      "review_reasons": []
+    }
+  },
+  {
+    "id": "case-002-healthcare-patient-portal",
+    "difficulty": "medium",
+    "transcript": "We are a private clinic group, eleven sites across the country, and every site books appointments differently. The goal is one patient portal. Patients log in, see their upcoming appointments, book and reschedule, download their reports, and message their doctor. Clinicians need the other side of it: agenda per practitioner, room and equipment availability, and the clinical record with history and prescriptions. The part our lawyers care about is the audit trail, consent management and data retention, because we are under health data regulation and we have already been audited once. We also need to pull lab results in from two external providers, both of them HL7. Django on the backend, Postgres. Teleconsultation is explicitly out of scope for now, we tried it during the pandemic and it was a mess. Rough target is end of the fiscal year.",
+    "expected_engineer_days": 150,
+    "acceptable_range": [95, 220],
+    "ground_truth": {
+      "total_engineer_days": 148,
+      "duration_weeks": 38,
+      "modules": [
+        {
+          "name": "Patient Portal",
+          "description": "Authentication, profile, appointment visibility.",
+          "tasks": [
+            {
+              "name": "Patient authentication and SSO",
+              "description": "Login, account creation, password reset, session management.",
+              "engineer_days": 12,
+              "grounded": true,
+              "sources": []
+            },
+            {
+              "name": "Appointment booking and reschedule",
+              "description": "Calendar UI, availability logic, conflict detection.",
+              "engineer_days": 18,
+              "grounded": true,
+              "sources": []
+            },
+            {
+              "name": "Medical report download",
+              "description": "Report retrieval, PDF generation, access control.",
+              "engineer_days": 10,
+              "grounded": true,
+              "sources": []
+            },
+            {
+              "name": "Patient-clinician messaging",
+              "description": "Secure message inbox, thread management, notifications.",
+              "engineer_days": 12,
+              "grounded": true,
+              "sources": []
+            }
+          ]
+        },
+        {
+          "name": "Clinician Workstation",
+          "description": "Agenda, EHR, clinical data entry.",
+          "tasks": [
+            {
+              "name": "Practitioner agenda and scheduling",
+              "description": "Calendar view per clinician, room and equipment assignment.",
+              "engineer_days": 14,
+              "grounded": true,
+              "sources": []
+            },
+            {
+              "name": "Electronic health record (EHR)",
+              "description": "Clinical history, prescriptions, lab results display.",
+              "engineer_days": 20,
+              "grounded": true,
+              "sources": []
+            },
+            {
+              "name": "Clinical data entry forms",
+              "description": "Structured data entry with validation, clinical templates.",
+              "engineer_days": 16,
+              "grounded": true,
+              "sources": []
+            }
+          ]
+        },
+        {
+          "name": "Compliance & Data Governance",
+          "description": "Audit trail, consent, data retention.",
+          "tasks": [
+            {
+              "name": "Audit trail and logging",
+              "description": "Record all access and modifications, tamper-proof logging.",
+              "engineer_days": 14,
+              "grounded": true,
+              "sources": []
+            },
+            {
+              "name": "Consent and privacy management",
+              "description": "Patient consent tracking, privacy policies, data exposure control.",
+              "engineer_days": 12,
+              "grounded": true,
+              "sources": []
+            }
+          ]
+        },
+        {
+          "name": "Clinical Interoperability",
+          "description": "HL7 integration with external labs.",
+          "tasks": [
+            {
+              "name": "HL7 lab result ingestion",
+              "description": "Parse and ingest HL7 from two external lab providers.",
+              "engineer_days": 10,
+              "grounded": true,
+              "sources": []
+            }
+          ]
+        }
+      ],
+      "confidence": "high",
+      "reasoning": "Healthcare patient portals with EHR, compliance, and interoperability are well-represented in the historical corpus. 140-160 engineer-day range is typical for multi-site clinic systems.",
+      "sources": [],
+      "assumptions": [],
+      "requires_human_review": false,
+      "review_reasons": []
+    }
+  },
+  {
+    "id": "case-003-logistics-fleet-telemetry",
+    "difficulty": "medium",
+    "transcript": "We operate a regional last-mile fleet, about two hundred vans. Right now dispatch is a whiteboard and a WhatsApp group, which is exactly as bad as it sounds. We want route planning that accounts for delivery windows and vehicle capacity, live position from the telematics boxes already fitted in the vans, and a driver app that keeps working when the van goes through a valley with no signal and syncs when it comes back. Warehouse side we need inventory per depot so dispatch knows what is actually loaded. Customers should get a notification with a tracking link. Python and FastAPI, we have that in house. We are not building the telematics hardware, it is a third-party box with a documented API. Six months would be ideal, nine is survivable.",
+    "expected_engineer_days": 100,
+    "acceptable_range": [62, 150],
+    "ground_truth": {
+      "total_engineer_days": 102,
+      "duration_weeks": 26,
+      "modules": [
+        {
+          "name": "Dispatch & Routing",
+          "description": "Route optimization, delivery window constraints.",
+          "tasks": [
+            {
+              "name": "Route optimization engine",
+              "description": "Vehicle capacity constraints, delivery window feasibility, cost minimization.",
+              "engineer_days": 20,
+              "grounded": true,
+              "sources": []
+            },
+            {
+              "name": "Dispatcher UI",
+              "description": "Route assignment, manual override, real-time updates.",
+              "engineer_days": 12,
+              "grounded": true,
+              "sources": []
+            }
+          ]
+        },
+        {
+          "name": "Telemetry & Live Tracking",
+          "description": "Vehicle position, telematics API integration.",
+          "tasks": [
+            {
+              "name": "Telematics API integration",
+              "description": "Vehicle position polling, telemetry data ingestion.",
+              "engineer_days": 8,
+              "grounded": true,
+              "sources": []
+            },
+            {
+              "name": "Live tracking display",
+              "description": "Real-time vehicle position on map, status updates.",
+              "engineer_days": 10,
+              "grounded": true,
+              "sources": []
+            }
+          ]
+        },
+        {
+          "name": "Driver Mobile App",
+          "description": "Offline-capable route execution.",
+          "tasks": [
+            {
+              "name": "Driver app development",
+              "description": "Route display, offline sync, stop-level delivery confirmation.",
+              "engineer_days": 18,
+              "grounded": true,
+              "sources": []
+            },
+            {
+              "name": "Offline data sync",
+              "description": "Queue-based sync, conflict resolution, background sync.",
+              "engineer_days": 12,
+              "grounded": true,
+              "sources": []
+            }
+          ]
+        },
+        {
+          "name": "Warehouse & Inventory",
+          "description": "Depot-level inventory tracking.",
+          "tasks": [
+            {
+              "name": "Depot inventory system",
+              "description": "Stock per depot, load-out tracking, dispatch visibility.",
+              "engineer_days": 10,
+              "grounded": true,
+              "sources": []
+            }
+          ]
+        },
+        {
+          "name": "Customer Notifications",
+          "description": "Tracking link delivery.",
+          "tasks": [
+            {
+              "name": "Tracking notification engine",
+              "description": "SMS or email with tracking link, delivery confirmation.",
+              "engineer_days": 8,
+              "grounded": true,
+              "sources": []
+            }
+          ]
+        },
+        {
+          "name": "Infrastructure & DevOps",
+          "description": "Deployment, monitoring, scaling.",
+          "tasks": [
+            {
+              "name": "Infrastructure setup and monitoring",
+              "description": "FastAPI deployment, observability, scaling.",
+              "engineer_days": 4,
+              "grounded": false,
+              "sources": []
+            }
+          ]
+        }
+      ],
+      "confidence": "high",
+      "reasoning": "Fleet management, route optimization, and IoT integration are established problem domains in the logistics corpus. 90-110 engineer-day range for two-hundred-van operations is consistent with historical data.",
+      "sources": [],
+      "assumptions": [],
+      "requires_human_review": false,
+      "review_reasons": []
+    }
+  },
+  {
+    "id": "case-004-finance-regulatory-reporting",
+    "difficulty": "medium",
+    "transcript": "We are the technology side of a mid-tier asset manager. The regulator has changed the reporting format and our current pipeline is a set of spreadsheets that one person understands. We need the regulatory reports generated from source data, with lineage, so that when a supervisor asks where a number came from we can answer in minutes rather than days. That means ingestion from the custodian feeds, validation rules with an exceptions queue for the operations team, the report templates themselves, and an approval workflow with a real four-eyes check before anything is submitted. Access control matters enormously here: who may see which portfolios, and every access logged. Java and Spring, that is what our platform team supports. We are not touching the trading systems. The regulatory deadline is fixed and it is in nine months.",
+    "expected_engineer_days": 90,
+    "acceptable_range": [55, 140],
+    "ground_truth": {
+      "total_engineer_days": 88,
+      "duration_weeks": 22,
+      "modules": [
+        {
+          "name": "Data Ingestion",
+          "description": "Custodian feed integration, data validation.",
+          "tasks": [
+            {
+              "name": "Custodian feed ingestion",
+              "description": "Parse custodian data, validation rules, error handling.",
+              "engineer_days": 12,
+              "grounded": true,
+              "sources": []
+            },
+            {
+              "name": "Data validation and reconciliation",
+              "description": "Cross-checks, exceptions queue, manual review workflow.",
+              "engineer_days": 10,
+              "grounded": true,
+              "sources": []
+            }
+          ]
+        },
+        {
+          "name": "Report Generation",
+          "description": "Template-based regulatory report assembly.",
+          "tasks": [
+            {
+              "name": "Report template engine",
+              "description": "Regulatory format templates, dynamic data binding.",
+              "engineer_days": 14,
+              "grounded": true,
+              "sources": []
+            },
+            {
+              "name": "Data lineage and provenance tracking",
+              "description": "Record the source of every number, audit trail.",
+              "engineer_days": 12,
+              "grounded": true,
+              "sources": []
+            }
+          ]
+        },
+        {
+          "name": "Approval Workflow",
+          "description": "Four-eyes review before submission.",
+          "tasks": [
+            {
+              "name": "Multi-step approval workflow",
+              "description": "Prepared → reviewed → approved → submitted states.",
+              "engineer_days": 10,
+              "grounded": true,
+              "sources": []
+            }
+          ]
+        },
+        {
+          "name": "Access Control & Compliance",
+          "description": "Portfolio-level permissions, audit logging.",
+          "tasks": [
+            {
+              "name": "Role-based access control (RBAC)",
+              "description": "Portfolio visibility rules, permission enforcement.",
+              "engineer_days": 10,
+              "grounded": true,
+              "sources": []
+            },
+            {
+              "name": "Audit logging and compliance",
+              "description": "All access logged, regulatory compliance tracking.",
+              "engineer_days": 10,
+              "grounded": true,
+              "sources": []
+            }
+          ]
+        }
+      ],
+      "confidence": "high",
+      "reasoning": "Regulatory reporting, data lineage, and access control are standard components in financial compliance systems. 80-100 engineer-day range aligns with mid-size asset manager implementations.",
+      "sources": [],
+      "assumptions": [],
+      "requires_human_review": false,
+      "review_reasons": []
+    }
+  },
+  {
+    "id": "case-005-multi-component-edge",
+    "difficulty": "hard",
+    "transcript": "This one is broad, so bear with me. We are a professional training provider and we are consolidating three products into one platform. First, the learning side: course catalogue, enrolment, lesson sequencing, quizzes and certification, and a gradebook the instructors actually trust. Second, the video side: our lectures are currently on a third-party player and we want our own streaming with adaptive bitrate, resumable playback and captions, because retention analytics on someone else's player is useless to us. Third, everything has to talk to the systems we already run: the CRM for leads, the billing platform for subscriptions, and single sign-on for corporate customers whose staff log in with their employer's identity provider. Ruby on Rails for the platform. We know this is several projects wearing a trench coat, which is why we want the estimate broken down by block rather than one number.",
+    "expected_engineer_days": 190,
+    "acceptable_range": [120, 280],
+    "ground_truth": {
+      "total_engineer_days": 192,
+      "duration_weeks": 48,
+      "modules": [
+        {
+          "name": "Learning Platform",
+          "description": "Course catalogue, enrolment, sequencing, quizzes.",
+          "tasks": [
+            {
+              "name": "Course catalogue and taxonomy",
+              "description": "Course metadata, hierarchy, searchability.",
+              "engineer_days": 12,
+              "grounded": true,
+              "sources": []
+            },
+            {
+              "name": "Student enrolment workflow",
+              "description": "Registration, course assignment, payment collection.",
+              "engineer_days": 14,
+              "grounded": true,
+              "sources": []
+            },
+            {
+              "name": "Lesson sequencing engine",
+              "description": "Prerequisite checking, adaptive progression, skip logic.",
+              "engineer_days": 16,
+              "grounded": true,
+              "sources": []
+            },
+            {
+              "name": "Quiz and assessment system",
+              "description": "Question types, answer validation, scoring.",
+              "engineer_days": 14,
+              "grounded": true,
+              "sources": []
+            },
+            {
+              "name": "Gradebook and certification",
+              "description": "Grade aggregation, certificate generation and delivery.",
+              "engineer_days": 12,
+              "grounded": true,
+              "sources": []
+            }
+          ]
+        },
+        {
+          "name": "Video Platform",
+          "description": "Streaming, adaptive bitrate, captions, analytics.",
+          "tasks": [
+            {
+              "name": "Video streaming server",
+              "description": "HLS/DASH adaptive bitrate streaming.",
+              "engineer_days": 18,
+              "grounded": true,
+              "sources": []
+            },
+            {
+              "name": "Playback client and resumable sessions",
+              "description": "Web player, resume from checkpoint, progress tracking.",
+              "engineer_days": 14,
+              "grounded": true,
+              "sources": []
+            },
+            {
+              "name": "Video analytics and retention tracking",
+              "description": "Watch time per student, engagement metrics, cohort analysis.",
+              "engineer_days": 12,
+              "grounded": true,
+              "sources": []
+            },
+            {
+              "name": "Closed captions and transcription",
+              "description": "Caption upload, sync, multi-language support.",
+              "engineer_days": 10,
+              "grounded": true,
+              "sources": []
+            }
+          ]
+        },
+        {
+          "name": "Enterprise Integrations",
+          "description": "CRM, billing, SSO.",
+          "tasks": [
+            {
+              "name": "CRM integration (lead sync)",
+              "description": "Bidirectional sync with CRM, lead capture.",
+              "engineer_days": 10,
+              "grounded": true,
+              "sources": []
+            },
+            {
+              "name": "Billing platform integration",
+              "description": "Subscription synchronization, invoice generation.",
+              "engineer_days": 12,
+              "grounded": true,
+              "sources": []
+            },
+            {
+              "name": "Enterprise SSO (SAML/OAuth)",
+              "description": "Corporate identity provider integration, JIT provisioning.",
+              "engineer_days": 12,
+              "grounded": true,
+              "sources": []
+            }
+          ]
+        }
+      ],
+      "confidence": "medium",
+      "reasoning": "This spans two sectors (education and media) with distinct but separately precedented components. The multi-sector composition makes exact extrapolation harder, but the breakdown aligns with published estimates for LMS platforms (~80), video platforms (~70), and integrations (~30).",
+      "sources": [],
+      "assumptions": [],
+      "requires_human_review": false,
+      "review_reasons": []
+    }
+  }
+]
