@@ -25,6 +25,7 @@ from pydantic import BaseModel, Field
 from app.api.rate_limiting import limiter
 from app.api.security import require_retrieval_key
 from app.dependencies import get_embedder, get_engine, get_settings
+from app.foundation.reranking import CrossEncoderReranker, DEFAULT_RERANK_MODEL
 from app.generation.rag.errors import RetrievalError
 from app.generation.rag.schemas import RetrievedChunk, RetrievalResult
 from app.generation.rag.store.models import (
@@ -76,14 +77,32 @@ class HybridSearchRequest(BaseModel):
         le=500.0,
         description="RRF smoothing constant; higher = more balanced fusion, lower = favor top ranks",
     )
+    enable_reranking: bool = Field(
+        default=False,
+        description="If true, apply cross-encoder reranking to top-50 candidates, return top-rerank_top_k",
+    )
+    rerank_model: str = Field(
+        default=DEFAULT_RERANK_MODEL,
+        description="Cross-encoder model name (HuggingFace); only used if enable_reranking=true",
+    )
+    rerank_top_k: int = Field(
+        default=5,
+        ge=1,
+        le=50,
+        description="Final results after reranking; only used if enable_reranking=true",
+    )
 
 
 class HybridSearchResult(BaseModel):
-    """Single fused result with RRF score."""
+    """Single fused result with RRF score and optional rerank score."""
 
     chunk: RetrievedChunk
     rrf_score: float = Field(
         description="Reciprocal Rank Fusion score; sum of 1/(k+rank) across branches"
+    )
+    rerank_score: float | None = Field(
+        default=None,
+        description="Cross-encoder relevance score [0, 1] if reranking enabled, else None",
     )
     vector_rank: int | None = Field(default=None, description="Rank in vector branch (0-indexed), or None if missing")
     lexical_rank: int | None = Field(default=None, description="Rank in lexical branch (0-indexed), or None if missing")
@@ -97,6 +116,15 @@ class HybridSearchResponse(BaseModel):
     collection: str
     top_k: int
     rrf_k: float
+    reranked: bool = Field(
+        description="Whether cross-encoder reranking was applied"
+    )
+    rerank_model: str | None = Field(
+        default=None, description="Cross-encoder model used, if reranked=true"
+    )
+    rerank_top_k: int | None = Field(
+        default=None, description="Final top-k after reranking, if reranked=true"
+    )
 
 
 @router.post("/hybrid-search")
@@ -132,12 +160,14 @@ async def hybrid_search(
     try:
         async with AsyncSession(engine) as session:
             store = ChunkStore()
-            # Hybrid search with RRF fusion
+
+            # Recall stage: fetch top-k (or top-50 if reranking is enabled)
+            recall_k = 50 if req.enable_reranking else req.top_k
             fused_rows = await store.search_hybrid(
                 session,
                 query_vector=query_embedding,
                 query_text=req.query_text,
-                top_k=req.top_k,
+                top_k=recall_k,
                 distance_threshold=req.distance_threshold,
                 sectors=req.sectors,
                 project_year_min=req.year_min,
@@ -147,9 +177,9 @@ async def hybrid_search(
                 rrf_k=req.rrf_k,
             )
 
-            # Unpack: rows are (id, document_id, chunk_type, content, metadata_, distance, rank, rrf_score)
-            results = []
-            for i, row in enumerate(fused_rows):
+            # Prepare result objects (common to both branches)
+            result_rows = []
+            for row in fused_rows:
                 chunk = RetrievedChunk(
                     id=row.id,
                     document_id=row.document_id,
@@ -157,29 +187,105 @@ async def hybrid_search(
                     content=row.content,
                     metadata=row.metadata_,
                 )
-                results.append(
+                result_rows.append((chunk, row[-1]))  # (chunk, rrf_score)
+
+            # Rerank stage: if enabled, score with cross-encoder and reorder
+            if req.enable_reranking:
+                try:
+                    reranker = CrossEncoderReranker(req.rerank_model)
+                    # Prepare dicts for reranker (content key required)
+                    chunk_dicts = [
+                        {
+                            "id": chunk.id,
+                            "document_id": chunk.document_id,
+                            "chunk_type": chunk.chunk_type,
+                            "content": chunk.content,
+                            "metadata": chunk.metadata,
+                            "rrf_score": rrf_score,
+                        }
+                        for chunk, rrf_score in result_rows
+                    ]
+
+                    # Rerank and cap at rerank_top_k
+                    reranked = await reranker.rerank(
+                        req.query_text,
+                        chunk_dicts,
+                        top_k=req.rerank_top_k,
+                    )
+
+                    results = []
+                    for chunk_dict, rerank_score in reranked:
+                        results.append(
+                            HybridSearchResult(
+                                chunk=RetrievedChunk(
+                                    id=chunk_dict["id"],
+                                    document_id=chunk_dict["document_id"],
+                                    chunk_type=chunk_dict["chunk_type"],
+                                    content=chunk_dict["content"],
+                                    metadata=chunk_dict["metadata"],
+                                ),
+                                rrf_score=chunk_dict["rrf_score"],
+                                rerank_score=rerank_score,
+                            )
+                        )
+
+                    log.info(
+                        "hybrid_search_with_reranking_success",
+                        collection=req.collection,
+                        recall_k=recall_k,
+                        rerank_model=req.rerank_model,
+                        rerank_top_k=req.rerank_top_k,
+                        results_count=len(results),
+                        rrf_k=req.rrf_k,
+                    )
+
+                    return HybridSearchResponse(
+                        results=results,
+                        query_text=req.query_text,
+                        collection=req.collection,
+                        top_k=req.top_k,
+                        rrf_k=req.rrf_k,
+                        reranked=True,
+                        rerank_model=req.rerank_model,
+                        rerank_top_k=req.rerank_top_k,
+                    )
+
+                except Exception as e:
+                    log.error(
+                        "reranking_failed",
+                        collection=req.collection,
+                        rerank_model=req.rerank_model,
+                        error=str(e),
+                    )
+                    raise HTTPException(status_code=502, detail="Reranking service unavailable") from e
+
+            else:
+                # No reranking: return RRF-ranked results directly
+                results = [
                     HybridSearchResult(
                         chunk=chunk,
-                        rrf_score=row[-1],  # Last element is rrf_score
+                        rrf_score=rrf_score,
                     )
+                    for chunk, rrf_score in result_rows
+                ]
+
+                log.info(
+                    "hybrid_search_success",
+                    collection=req.collection,
+                    query_len=len(req.query_text),
+                    top_k=req.top_k,
+                    results_count=len(results),
+                    rrf_k=req.rrf_k,
                 )
 
-            log.info(
-                "hybrid_search_success",
-                collection=req.collection,
-                query_len=len(req.query_text),
-                top_k=req.top_k,
-                results_count=len(results),
-                rrf_k=req.rrf_k,
-            )
-
-            return HybridSearchResponse(
-                results=results,
-                query_text=req.query_text,
-                collection=req.collection,
-                top_k=req.top_k,
-                rrf_k=req.rrf_k,
-            )
+                return HybridSearchResponse(
+                    results=results,
+                    query_text=req.query_text,
+                    collection=req.collection,
+                    top_k=req.top_k,
+                    rrf_k=req.rrf_k,
+                    reranked=False,
+                )
 
     except RetrievalError as e:
         log.error("retrieval_error", collection=req.collection, top_k=req.top_k, error=str(e))
