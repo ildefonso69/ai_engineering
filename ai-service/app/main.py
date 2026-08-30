@@ -26,6 +26,7 @@ from app.api.routers.estimate_graph import router as estimate_graph_router
 from app.api.routers.estimate_supervisor import router as estimate_supervisor_router
 from app.api.routers.retrieval import router as retrieval_router
 from app.api.routers.retrieval_advanced import router as retrieval_advanced_router
+from app.api.routers.retrieval_hybrid import router as retrieval_hybrid_router
 
 
 def configure_logging() -> None:
@@ -248,6 +249,8 @@ app.include_router(config_api.router)
 app.include_router(retrieval_router)
 # Session 10 — advanced multi-index retrieval (routing, expansion, decay).
 app.include_router(retrieval_advanced_router)
+# Hybrid search: vector + lexical fusion via RRF.
+app.include_router(retrieval_hybrid_router)
 app.include_router(estimate_router)
 # Per-stage endpoints exposing each pipeline step (wizard / live-session aid).
 app.include_router(estimate_stages_router)

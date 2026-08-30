@@ -261,6 +261,86 @@ class ChunkStore:
         )
         return list((await session.execute(stmt)).all())
 
+    async def search_hybrid(
+        self,
+        session: AsyncSession,
+        *,
+        query_vector: list[float],
+        query_text: str,
+        top_k: int = 10,
+        distance_threshold: float = 0.6,
+        sectors: list[str] | None = None,
+        project_year_min: int | None = None,
+        project_year_max: int | None = None,
+        chunk_types: list[str] | None = None,
+        model: type = BudgetChunkRow,
+        extra_filters: list | None = None,
+        rrf_k: float = 60.0,
+    ) -> list[Row]:
+        """Hybrid search: vectorial + lexical fusion via Reciprocal Rank Fusion (RRF).
+
+        Combines ``search_filtered`` (vector k-NN with threshold) and ``search_lexical``
+        (full-text ranking) into a single ranking using RRF. Each result from either
+        branch contributes a score = 1 / (rrf_k + rank), where rank is its position
+        in that branch (0-indexed). Chunks appearing in both branches score higher.
+
+        RRF is parameter-free (within reason) and robust to score scale differences —
+        it sees only ranks. The smoothing constant ``rrf_k`` (default 60) prevents
+        top-1 results from dominating; increase it for more balanced fusion.
+
+        Returns rows in descending RRF score order. ``rrf_score`` is attached for
+        debugging; ``distance`` and ``rank`` from the underlying branches ride along.
+        """
+        vector_results, _ = await self.search_filtered(
+            session,
+            query_vector=query_vector,
+            top_k=top_k * 2,  # Get more candidates to increase overlap odds
+            distance_threshold=distance_threshold,
+            sectors=sectors,
+            project_year_min=project_year_min,
+            project_year_max=project_year_max,
+            chunk_types=chunk_types,
+            model=model,
+            extra_filters=extra_filters,
+        )
+        lexical_results = await self.search_lexical(
+            session,
+            query_text=query_text,
+            top_k=top_k * 2,
+            sectors=sectors,
+            project_year_min=project_year_min,
+            project_year_max=project_year_max,
+            chunk_types=chunk_types,
+            model=model,
+            extra_filters=extra_filters,
+        )
+
+        # Build rank-indexed mappings: {chunk_id -> (rank, score, row)}
+        vector_ranks = {row.id: (i, 1.0 / (rrf_k + i), row) for i, row in enumerate(vector_results)}
+        lexical_ranks = {row.id: (i, 1.0 / (rrf_k + i), row) for i, row in enumerate(lexical_results)}
+
+        # Fuse: gather chunk_ids from both branches, accumulate RRF scores
+        fused: dict[int, tuple[float, Row]] = {}
+        for chunk_id, (_, rrf_score, row) in vector_ranks.items():
+            fused[chunk_id] = (rrf_score, row)
+        for chunk_id, (_, rrf_score, row) in lexical_ranks.items():
+            if chunk_id in fused:
+                current_score, _ = fused[chunk_id]
+                fused[chunk_id] = (current_score + rrf_score, row)
+            else:
+                fused[chunk_id] = (rrf_score, row)
+
+        # Sort by RRF score DESC, cap at top_k
+        sorted_results = sorted(fused.items(), key=lambda x: x[1][0], reverse=True)[:top_k]
+
+        # Build result rows with rrf_score attached for debugging
+        out = []
+        for _, (rrf_score, row) in sorted_results:
+            # Reconstruct row tuple with rrf_score appended
+            result_tuple = tuple(row) + (rrf_score,)
+            out.append(result_tuple)
+        return out
+
     @staticmethod
     def _structural_filters(
         model: type,
