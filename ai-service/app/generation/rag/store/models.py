@@ -50,8 +50,8 @@ EMBEDDING_DIMENSIONS = 1536  # text-embedding-3-small
 # Postgres text-search configuration for the generated ``content_tsv`` column.
 # It must match BOTH the corpus language AND the ``plainto_tsquery`` config in
 # ``store/repository.py``; an index/query config mismatch silently bypasses the
-# GIN index. The shipped corpus is English (see migration 0003 for the rationale).
-FTS_REGCONFIG = "english"
+# GIN index. The corpus is in Spanish, so the configuration is ``spanish``.
+FTS_REGCONFIG = "spanish"
 
 
 class DocumentRow(Base):
@@ -95,8 +95,8 @@ class _ChunkColumns:
     embedding: Mapped[list[float] | None] = mapped_column(
         Vector(EMBEDDING_DIMENSIONS), nullable=True
     )
-    # STORED generated tsvector — Postgres maintains it from ``content`` (no
-    # trigger, no drift). Read-only at the ORM level.
+    # STORED generated tsvector — Postgres maintains it automatically from ``content``
+    # using the FTS_REGCONFIG language (Spanish). No trigger, no drift. Read-only at ORM level.
     content_tsv: Mapped[str | None] = mapped_column(
         TSVECTOR,
         Computed(f"to_tsvector('{FTS_REGCONFIG}', content)", persisted=True),
