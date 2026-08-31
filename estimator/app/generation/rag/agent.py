@@ -19,9 +19,107 @@ import structlog
 from openai import AsyncOpenAI
 
 from app.generation.rag.agent_tools import calculate_estimate, search_budgets
-from app.generation.rag.schemas import Estimate, EstimationQuery, SourceCitation, WorkModule, TaskItem
+from app.generation.rag.schemas import Assumption, Estimate, EstimationQuery, SourceCitation, WorkModule, TaskItem
 
 log = structlog.get_logger()
+
+
+def _extract_json_from_text(text: str) -> dict[str, Any] | None:
+    """Extract JSON object from LLM response text.
+
+    Looks for a JSON block in the text; handles markdown fences and plain JSON.
+    """
+    # Try to find JSON in markdown code block
+    if "```json" in text:
+        start = text.find("```json") + 7
+        end = text.find("```", start)
+        if end > start:
+            json_text = text[start:end].strip()
+            try:
+                return json.loads(json_text)
+            except json.JSONDecodeError:
+                pass
+
+    # Try to find standalone JSON object
+    try:
+        start = text.find("{")
+        end = text.rfind("}") + 1
+        if start >= 0 and end > start:
+            json_text = text[start:end]
+            return json.loads(json_text)
+    except (json.JSONDecodeError, ValueError):
+        pass
+
+    return None
+
+
+def _build_estimate_from_json(json_data: dict[str, Any]) -> Estimate:
+    """Convert LLM JSON response into an Estimate object."""
+    try:
+        # Extract modules and tasks
+        modules = []
+        for mod_data in json_data.get("modules", []):
+            tasks = [
+                TaskItem(
+                    name=task.get("name", ""),
+                    description=task.get("description"),
+                    engineer_days=int(task.get("engineer_days", 0)),
+                    sources=task.get("sources", []),
+                )
+                for task in mod_data.get("tasks", [])
+            ]
+            modules.append(
+                WorkModule(
+                    name=mod_data.get("name", ""),
+                    description=mod_data.get("description"),
+                    tasks=tasks,
+                )
+            )
+
+        # Extract source citations
+        sources = [
+            SourceCitation(
+                source_id=src.get("source_id", 0),
+                relevance=src.get("relevance", "supporting"),
+                used_for=src.get("used_for", ""),
+            )
+            for src in json_data.get("sources", [])
+        ]
+
+        # Extract assumptions
+        assumptions = [
+            Assumption(
+                description=ass.get("description", ""),
+                impact=ass.get("impact", "medium"),
+                rationale=ass.get("rationale", ""),
+            )
+            for ass in json_data.get("assumptions", [])
+        ]
+
+        # Build final estimate
+        return Estimate(
+            total_engineer_days=int(json_data.get("total_engineer_days") or 0),
+            modules=modules,
+            duration_weeks=None,  # Could calculate from engineer_days if needed
+            sources=sources,
+            assumptions=assumptions,
+            confidence=json_data.get("confidence", "medium"),
+            reasoning=json_data.get("reasoning", "Estimated via agentic loop."),
+            insufficient_context_explanation=None,
+        )
+    except Exception as exc:
+        log.error("estimate_json_parse_failed", error=str(exc)[:300])
+        # Return a low-confidence estimate on parse failure
+        return Estimate(
+            total_engineer_days=None,
+            modules=[],
+            duration_weeks=None,
+            sources=[],
+            assumptions=[],
+            confidence="low",
+            reasoning="Failed to parse JSON estimate from agent response.",
+            insufficient_context_explanation="Agent response was malformed.",
+        )
 
 
 @dataclass
@@ -73,21 +171,56 @@ class Agent:
 2. Identify the components or requirements to estimate (e.g., backend, frontend, integrations).
 3. Use the search_budgets tool to find historical budget references for EACH component separately.
 4. After collecting references for all components, use calculate_estimate to aggregate them.
-5. Provide a final consolidated estimate.
+5. Provide a final consolidated estimate in structured JSON format.
 
 Method:
 - Do NOT try to estimate everything in one search. Break down the project into distinct components.
 - For each component, call search_budgets with a focused query (e.g., "backend business logic", "mobile app").
 - Collect results from multiple searches; note patterns in hours/effort across components.
 - Once you have enough references for all identified components, call calculate_estimate with the component data.
-- Provide a summary of your findings and the final estimate.
+
+FINAL RESPONSE FORMAT (after all tool calls are done):
+Provide your final answer as a JSON object with this structure:
+{
+  "total_engineer_days": <number>,
+  "modules": [
+    {
+      "name": "<module name>",
+      "description": "<what this module covers>",
+      "tasks": [
+        {
+          "name": "<task name>",
+          "description": "<task scope>",
+          "engineer_days": <number>,
+          "sources": [<chunk ids that back this task>]
+        }
+      ]
+    }
+  ],
+  "sources": [
+    {
+      "source_id": <id>,
+      "relevance": "primary"|"supporting"|"tangential",
+      "used_for": "<what this source contributed>"
+    }
+  ],
+  "assumptions": [
+    {
+      "description": "<assumption text>",
+      "impact": "high"|"medium"|"low",
+      "rationale": "<why this assumption was made>"
+    }
+  ],
+  "confidence": "high"|"medium"|"low"|"insufficient",
+  "reasoning": "<summary of how you estimated>"
+}
 
 You have two tools available:
 - search_budgets: retrieve historical budgets for a specific component or requirement
 - calculate_estimate: aggregate components and their reference amounts into a total estimate
 
 Be systematic and thorough. Make multiple searches if needed, but set a reasonable limit (max 4-5 searches).
-After consolidation, provide your final answer."""
+After consolidation, emit the JSON response above — this is critical."""
 
     def _build_tools_schema(self) -> list[dict[str, Any]]:
         """Build the JSON schema for the Responses API tools."""
@@ -284,18 +417,46 @@ After consolidation, provide your final answer."""
             messages.append({"role": "user", "content": tool_results})
 
         # Extract the final estimate from the last response
-        # For now, create a placeholder estimate
         final_estimate = Estimate(
             total_engineer_days=None,
             modules=[],
             duration_weeks=None,
             sources=[],
             assumptions=[],
-            confidence="medium",
-            reasoning="Estimated via agentic loop.",
+            confidence="insufficient",
+            reasoning="No response from agent.",
+            insufficient_context_explanation="Agent did not produce a response.",
         )
 
-        log.info("agent_completed", steps=len(self.trace))
+        if final_response:
+            # Parse text content from final response
+            final_text = ""
+            for block in final_response.content:
+                if hasattr(block, "text"):
+                    final_text = block.text
+                    break
+
+            if final_text:
+                # Try to extract JSON from the response
+                json_data = _extract_json_from_text(final_text)
+                if json_data:
+                    final_estimate = _build_estimate_from_json(json_data)
+                    log.info("agent_estimate_parsed", estimate_days=final_estimate.total_engineer_days)
+                else:
+                    log.warning("agent_no_json_found", final_text=final_text[:200])
+                    # Fall back to low-confidence estimate
+                    final_estimate = Estimate(
+                        total_engineer_days=None,
+                        modules=[],
+                        duration_weeks=None,
+                        sources=[],
+                        assumptions=[],
+                        confidence="low",
+                        reasoning=final_text[:500],
+                        insufficient_context_explanation="Agent response was not in expected JSON format.",
+                    )
+
+        log.info("agent_completed", steps=len(self.trace), confidence=final_estimate.confidence)
         return final_estimate, self.trace
 
     def format_trace(self) -> str:
