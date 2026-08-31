@@ -7,7 +7,7 @@ from functools import lru_cache
 import anthropic
 import redis
 import structlog
-from openai import OpenAI
+from openai import AsyncOpenAI, OpenAI
 
 from app.generation.cag.semantic import EstimationSemanticCache
 from app.config import get_settings
@@ -97,6 +97,15 @@ def get_openai_client() -> OpenAI | None:
     if not settings.OPENAI_API_KEY:
         return None
     return OpenAI(api_key=settings.OPENAI_API_KEY)
+
+
+@lru_cache
+def get_async_openai_client() -> AsyncOpenAI | None:
+    """Async OpenAI client for the agentic estimation pipeline (Session 12)."""
+    settings = get_settings()
+    if not settings.OPENAI_API_KEY:
+        return None
+    return AsyncOpenAI(api_key=settings.OPENAI_API_KEY)
 
 
 @lru_cache

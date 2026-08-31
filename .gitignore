@@ -2,6 +2,9 @@
 # never committed.
 guides/
 
+# Session pre-work and exploration docs (work-in-progress, not commiteable).
+SESSION_*.md
+
 # Local environment / editor cruft (the project also has its own .gitignore
 # inside estimator/, this catches files at the repo root).
 .DS_Store
