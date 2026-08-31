@@ -245,3 +245,68 @@ async def estimate_from_transcript(
         await asyncio.to_thread(store.set, idempotency_key, estimate)
 
     return estimate
+
+
+async def estimate_from_transcript_agentic(
+    transcript: str,
+    idempotency_key: str | None = None,
+) -> Estimate:
+    """Run the agentic multi-component estimation pipeline (Session 12).
+
+    Uses a manual agent loop with OpenAI function calling to handle
+    multi-component projects. The agent identifies components, searches
+    separately for each, and consolidates into a final estimate.
+
+    Parameters
+    ----------
+    transcript : str
+        Raw client meeting transcript.
+    idempotency_key : str, optional
+        When provided, a repeated call returns the cached estimate.
+
+    Returns
+    -------
+    Estimate
+        The aggregated estimate from multiple component searches.
+
+    Raises
+    ------
+    GenerationError
+        If the agent loop fails or no estimate can be produced.
+    """
+    from app.dependencies import get_async_openai_client, get_idempotency_store
+    from app.generation.rag.agent import Agent
+
+    request_id = _current_request_id()
+    store = get_idempotency_store() if idempotency_key else None
+
+    # Check idempotency cache
+    if store and idempotency_key:
+        cached = await asyncio.to_thread(store.get, idempotency_key)
+        if cached is not None:
+            log.info("idempotency_hit_agentic", request_id=request_id)
+            return cached
+
+    # Initialize agent and run
+    client = get_async_openai_client()
+    settings = get_settings()
+
+    agent = Agent(
+        client=client,
+        model=settings.PRIMARY_MODEL,
+        max_iterations=5,
+        reasoning_effort="medium",
+    )
+
+    with log_stage("agentic_estimation", request_id):
+        estimate, trace = await agent.run(transcript)
+
+    # Log trace
+    trace_str = agent.format_trace()
+    log.info("agent_trace", request_id=request_id, trace=trace_str)
+
+    # Cache if idempotency key provided
+    if store and idempotency_key:
+        await asyncio.to_thread(store.set, idempotency_key, estimate)
+
+    return estimate
