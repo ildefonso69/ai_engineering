@@ -35,14 +35,14 @@ RUN groupadd --system appgroup && \
 
 WORKDIR /app
 
-# Bring in the pre-built virtual environment from the builder stage.
-COPY --from=builder /app/.venv /app/.venv
+# Bring in the pre-built virtual environment from the builder stage. Chown at
+# copy time (not via a separate `RUN chown -R`) — a trailing chown over a
+# multi-GB .venv duplicates the whole layer via overlayfs copy-up, costing
+# several minutes on every build regardless of cache state.
+COPY --from=builder --chown=appuser:appgroup /app/.venv /app/.venv
 
 # Copy application source code.
-COPY app/ /app/app/
-
-# Ensure the non-root user owns everything it needs to run.
-RUN chown -R appuser:appgroup /app
+COPY --chown=appuser:appgroup app/ /app/app/
 
 # Put the virtual environment's bin directory first on PATH so `python` and
 # `uvicorn` resolve to the versions installed inside the venv.

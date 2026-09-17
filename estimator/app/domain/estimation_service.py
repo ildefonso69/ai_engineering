@@ -27,7 +27,9 @@ import json
 from typing import Any
 
 import structlog
+from pydantic import BaseModel, Field
 
+from app.config import get_settings
 from app.generation.cag.semantic import EstimationSemanticCache
 from app.foundation.guardrails.input import check_input
 from app.foundation.guardrails.output import enforce_scope_response
@@ -54,6 +56,26 @@ from app.generation.conversation.models import Session
 from app.generation.conversation.tier_resolver import Tier, resolve_tier
 
 log = structlog.get_logger()
+
+# ---------------------------------------------------------------------------
+# Session 13 — LangGraph re-expression (graph nodes call back into these
+# closures). Kept as small, private, module-level Pydantic models rather than
+# new entries in generation/rag/schemas.py to keep this session's footprint
+# additive-only; they describe an LLM output shape internal to the graph, not
+# a new public contract.
+# ---------------------------------------------------------------------------
+
+
+class _Component(BaseModel):
+    name: str = Field(description="Short component name, e.g. 'Auth', 'Payments'.")
+    category: str = Field(description="Coarse functional category, e.g. 'backend', 'infra'.")
+    requirements: list[str] = Field(
+        default_factory=list, description="Subset of the extracted requirements this covers."
+    )
+
+
+class _ComponentBreakdown(BaseModel):
+    components: list[_Component] = Field(default_factory=list)
 
 
 def _exact_cache_key(request: EstimationRequest, prompt_version: str, model: str) -> str:
@@ -437,3 +459,177 @@ class EstimationService:
             cached=False,
             acb=trace,
         )
+
+    async def estimate_from_transcript_graph(
+        self,
+        transcript: str,
+        idempotency_key: str | None = None,
+    ):
+        """LangGraph re-expression of ``estimate_from_transcript`` (Session 13).
+
+        ``generation/agentic/graph.py`` cannot import ``generation/rag`` (sibling
+        rule in ARCHITECTURE.md), so this method is where the two compose: it
+        wires plain-dict callables (:class:`GraphDependencies`) over the S9-S12
+        pure functions, runs the graph, then validates the final state's raw
+        estimate dict back into a typed :class:`Estimate` -- same return type
+        as ``estimate_from_transcript``/``estimate_from_transcript_agentic``,
+        nothing about the public contract changes.
+        """
+        from app.dependencies import get_llm_wrapper, get_token_encoder
+        from app.generation.agentic.graph import GraphDependencies, run_estimation_graph
+        from app.generation.rag.agent_tools import search_budgets as rag_search_budgets
+        from app.generation.rag.context_assembler import (
+            build_context_block,
+            truncate_to_token_budget,
+        )
+        from app.generation.rag.estimator import _generate, generate_estimate as rag_generate
+        from app.generation.rag.query_reformulator import reformulate_query
+        from app.generation.rag.schemas import Estimate, EstimationQuery, RetrievedChunk
+        from app.generation.rag.validation import check_coherence, validate_citations
+
+        settings = get_settings()
+
+        def _insufficient(explanation: str) -> dict[str, Any]:
+            return Estimate(
+                total_engineer_days=None,
+                duration_weeks=None,
+                confidence="insufficient",
+                reasoning="Retrieval did not surface enough relevant historical budgets.",
+                insufficient_context_explanation=explanation,
+            ).model_dump(mode="json")
+
+        async def _extract_requirements(transcript: str) -> tuple[list[str], dict[str, Any]]:
+            # Node 1 reuses the S9 reformulation stage: an EstimationQuery is
+            # already "the requirements that drive retrieval", just structured
+            # differently -- flatten it into a discrete requirements list.
+            query = await reformulate_query(transcript)
+            requirements = [query.function] if query.function else []
+            requirements += [f"Use {tech}" for tech in query.technologies]
+            requirements += query.constraints
+            requirements += [f"Comply with {reg}" for reg in query.regulations]
+            return requirements, query.model_dump(mode="json")
+
+        async def _classify_components(
+            requirements: list[str], structured_query: dict[str, Any]
+        ) -> list[dict[str, Any]]:
+            # Node 2 has no S9-S12 equivalent (the S12 agent's decomposition was
+            # a raw, unused function-calling loop -- not reused here); a small
+            # structured call over LLMWrapper groups requirements into
+            # components, mirroring every other structured-output call in the
+            # codebase.
+            wrapper = get_llm_wrapper()
+            breakdown, _meta = wrapper.complete_structured(
+                system_prompt=(
+                    "Group the given software requirements into functional "
+                    "components (e.g. Auth, Payments, Data, Frontend, Infra). "
+                    "Every requirement must belong to exactly one component."
+                ),
+                user_message=json.dumps(
+                    {"requirements": requirements, "brief": structured_query}
+                ),
+                response_model=_ComponentBreakdown,
+                model_override=settings.REFORMULATION_MODEL,
+            )
+            return [c.model_dump(mode="json") for c in breakdown.components]
+
+        async def _search_component_budgets(component: dict[str, Any]) -> dict[str, Any]:
+            # Node 3, per component: reuses the S12 retrieval tool as-is.
+            query_text = component.get("name", "") + ": " + "; ".join(
+                component.get("requirements", [])
+            )
+            result = await rag_search_budgets(query_text)
+            return {
+                "component": component.get("name"),
+                "chunks": result.get("items", []),
+                "low_confidence": bool(result.get("low_confidence", not result.get("items"))),
+            }
+
+        async def _generate_estimate(
+            structured_query: dict[str, Any], search_results: list[dict[str, Any]]
+        ) -> dict[str, Any]:
+            # Node 4: assemble every retrieved chunk into one context block and
+            # run the same grounded-generation call as the linear pipeline.
+            raw_chunks = [chunk for entry in search_results for chunk in entry.get("chunks", [])]
+            chunks = [
+                RetrievedChunk(
+                    id=c["chunk_id"],
+                    content=c["content"],
+                    sector=c["sector"],
+                    project_year=c["project_year"],
+                    chunk_type="historical_task",
+                    distance=c["distance"],
+                    budget_id=c.get("budget_id"),
+                )
+                for c in raw_chunks
+            ]
+            if not chunks:
+                return {"estimate": _insufficient(
+                    "No historical budgets crossed the relevance threshold for any component."
+                ), "kept_chunks": []}
+
+            encoder = get_token_encoder()
+            kept = truncate_to_token_budget(chunks, settings.MAX_CONTEXT_TOKENS, encoder)
+            context_block = build_context_block(kept)
+            query = EstimationQuery.model_validate(structured_query)
+            estimate = await rag_generate(context_block, structured_query=query)
+            return {
+                "estimate": estimate.model_dump(mode="json"),
+                "kept_chunks": [c.model_dump(mode="json") for c in kept],
+            }
+
+        async def _validate_and_consolidate(
+            estimate_dict: dict[str, Any],
+            kept_chunks: list[dict[str, Any]],
+            structured_query: dict[str, Any],
+        ) -> dict[str, Any]:
+            # Node 5: reuse validate_citations + check_coherence AS-IS (one
+            # citation retry, one coherence repair -- same budget as the linear
+            # pipeline). Unlike the linear pipeline, a still-broken estimate
+            # after the repair attempt does NOT raise: an unhandled exception
+            # mid-graph would crash the run instead of routing to a
+            # needs_review end, so it's reported via ``validation_passed``
+            # and the graph's conditional edge decides the final status.
+            estimate = Estimate.model_validate(estimate_dict)
+            kept = [RetrievedChunk.model_validate(c) for c in kept_chunks]
+            if not kept:
+                return {"estimate": estimate.model_dump(mode="json"), "validation_passed": True}
+
+            query = EstimationQuery.model_validate(structured_query)
+            context_block = build_context_block(kept)
+
+            fabricated = validate_citations(estimate, kept)
+            if fabricated:
+                feedback = (
+                    f"your previous response cited invalid source ids: {fabricated}. "
+                    "Only cite ids that appear in the <sources> block."
+                )
+                estimate = await _generate(context_block, query, feedback=feedback)
+                if validate_citations(estimate, kept):
+                    estimate = estimate.model_copy(update={"confidence": "low"})
+
+            if not check_coherence(estimate):
+                feedback = (
+                    'when confidence is "insufficient", total_engineer_days and '
+                    "duration_weeks must be null, modules must be empty and "
+                    "insufficient_context_explanation must be filled; otherwise provide "
+                    "the modules, tasks and numbers."
+                )
+                estimate = await _generate(context_block, query, feedback=feedback)
+                if not check_coherence(estimate):
+                    return {
+                        "estimate": estimate.model_dump(mode="json"),
+                        "validation_passed": False,
+                    }
+
+            return {"estimate": estimate.model_dump(mode="json"), "validation_passed": True}
+
+        deps = GraphDependencies(
+            extract_requirements=_extract_requirements,
+            classify_components=_classify_components,
+            search_component_budgets=_search_component_budgets,
+            generate_estimate=_generate_estimate,
+            validate_and_consolidate=_validate_and_consolidate,
+        )
+
+        final_state = await run_estimation_graph(transcript, deps, idempotency_key)
+        return Estimate.model_validate(final_state["estimate"])

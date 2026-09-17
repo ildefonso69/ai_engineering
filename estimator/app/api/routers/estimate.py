@@ -18,6 +18,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 
 from app.api.rate_limiting import limiter
 from app.api.security import require_estimate_key
+from app.dependencies import get_estimation_service
 from app.generation.rag.errors import RagError
 from app.generation.rag.estimator import estimate_from_transcript, estimate_from_transcript_agentic
 from app.generation.rag.schemas import Estimate, EstimateRequest
@@ -65,3 +66,28 @@ async def from_transcript_agentic(request: Request, payload: EstimateRequest) ->
     except RagError as exc:
         log.error("estimate_agentic_failed", error_type=type(exc).__name__, error=str(exc)[:300])
         raise HTTPException(status_code=502, detail="Agentic estimation failed.") from exc
+
+
+@router.post(
+    "/from-transcript-graph",
+    response_model=Estimate,
+    dependencies=[Depends(require_estimate_key)],
+)
+@limiter.limit("10/minute")
+async def from_transcript_graph(request: Request, payload: EstimateRequest) -> Estimate:
+    """Produce an estimate via the LangGraph re-expression of the pipeline (Session 13).
+
+    Sequential 5-node graph (extract_requirements -> classify_components ->
+    search_budgets -> generate_estimate -> validate_and_consolidate), checkpointed
+    on the project's Postgres with the idempotency key as thread_id. Same
+    ``Estimate`` contract as the other two estimation endpoints.
+    """
+    try:
+        service = get_estimation_service()
+        return await service.estimate_from_transcript_graph(
+            payload.transcript,
+            idempotency_key=payload.idempotency_key,
+        )
+    except RagError as exc:
+        log.error("estimate_graph_failed", error_type=type(exc).__name__, error=str(exc)[:300])
+        raise HTTPException(status_code=502, detail="Graph-based estimation failed.") from exc
