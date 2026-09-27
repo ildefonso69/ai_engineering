@@ -7,6 +7,7 @@ SESSION_*.md
 
 # Local environment / editor cruft (the project also has its own .gitignore
 # inside estimator/, this catches files at the repo root).
+.env
 .DS_Store
 .idea/
 .vscode/

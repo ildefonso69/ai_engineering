@@ -11,6 +11,8 @@ from __future__ import annotations
 import pytest
 from fastapi.testclient import TestClient
 
+import app.api.security as security
+from app.config import Settings
 from app.dependencies import get_estimation_service
 from app.main import app
 from app.domain.schemas.estimation import EstimationRequest, EstimationResponse, EstimationResult
@@ -52,6 +54,22 @@ def fake_service() -> FakeEstimationService:
     app.dependency_overrides[get_estimation_service] = lambda: svc
     yield svc
     app.dependency_overrides.pop(get_estimation_service, None)
+
+
+SERVICE_TOKEN = "shared-secret"
+
+
+@pytest.fixture(autouse=True)
+def _pin_service_token_settings(monkeypatch):
+    """Pin AI_SERVICE_TOKEN to "unset" for every test in this file by
+    default (reliability fix: the suite must not depend on whatever
+    AI_SERVICE_TOKEN happens to be exported in the developer's/CI shell).
+    The dedicated auth tests below override this per-test via the same
+    ``monkeypatch`` fixture instance.
+    """
+    monkeypatch.setattr(
+        security, "get_settings", lambda: type("S", (), {"AI_SERVICE_TOKEN": None})()
+    )
 
 
 VALID_PAYLOAD = {
@@ -104,3 +122,75 @@ def test_short_description_returns_422(client: TestClient, fake_service) -> None
     payload = {**VALID_PAYLOAD, "description": "too short"}
     response = client.post("/api/v1/estimate", json=payload)
     assert response.status_code == 422
+
+
+# ---- Session 15 service-token auth contract (see app/api/security.py) ----
+
+
+def test_service_token_unset_leaves_endpoint_open(
+    client: TestClient, fake_service: FakeEstimationService
+) -> None:
+    """Named regression test for the documented default: no AI_SERVICE_TOKEN
+    configured means the endpoint stays reachable with no header at all.
+    Uses the autouse pin above (AI_SERVICE_TOKEN=None) explicitly, so a
+    future change that flips this default fails loudly here."""
+    response = client.post("/api/v1/estimate", json=VALID_PAYLOAD)
+    assert response.status_code == 200
+
+
+def test_service_token_set_with_correct_header_returns_200(
+    client: TestClient, fake_service: FakeEstimationService, monkeypatch
+) -> None:
+    monkeypatch.setattr(
+        security, "get_settings", lambda: type("S", (), {"AI_SERVICE_TOKEN": SERVICE_TOKEN})()
+    )
+    response = client.post(
+        "/api/v1/estimate", json=VALID_PAYLOAD, headers={"X-Service-Token": SERVICE_TOKEN}
+    )
+    assert response.status_code == 200
+
+
+def test_service_token_set_with_missing_header_returns_401(
+    client: TestClient, fake_service: FakeEstimationService, monkeypatch
+) -> None:
+    monkeypatch.setattr(
+        security, "get_settings", lambda: type("S", (), {"AI_SERVICE_TOKEN": SERVICE_TOKEN})()
+    )
+    response = client.post("/api/v1/estimate", json=VALID_PAYLOAD)
+    assert response.status_code == 401
+
+
+def test_service_token_set_with_wrong_header_returns_401(
+    client: TestClient, fake_service: FakeEstimationService, monkeypatch
+) -> None:
+    monkeypatch.setattr(
+        security, "get_settings", lambda: type("S", (), {"AI_SERVICE_TOKEN": SERVICE_TOKEN})()
+    )
+    response = client.post(
+        "/api/v1/estimate", json=VALID_PAYLOAD, headers={"X-Service-Token": "wrong-token"}
+    )
+    assert response.status_code == 401
+
+
+def test_empty_string_service_token_from_env_behaves_as_unset(
+    client: TestClient, fake_service: FakeEstimationService, monkeypatch
+) -> None:
+    """The actual regression test for the bug three fresh-context reviewers
+    found: Compose's ``environment: AI_SERVICE_TOKEN: ${AI_SERVICE_TOKEN}``
+    sets the container env var to "" (not absent) whenever the root .env
+    doesn't define it. This must build a real ``Settings()`` from that env
+    var (not just call the dependency function in isolation), so it
+    exercises the actual env -> pydantic-settings pipeline where the bug
+    lived, and confirms "" behaves identically to a genuinely unset var.
+    """
+    monkeypatch.setenv("AI_SERVICE_TOKEN", "")
+    # Settings requires at least one LLM API key; pin one so the real
+    # Settings() construction below doesn't depend on ambient env either.
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-test-key")
+
+    real_settings = Settings()
+    assert real_settings.AI_SERVICE_TOKEN is None
+
+    monkeypatch.setattr(security, "get_settings", lambda: real_settings)
+    response = client.post("/api/v1/estimate", json=VALID_PAYLOAD)
+    assert response.status_code == 200

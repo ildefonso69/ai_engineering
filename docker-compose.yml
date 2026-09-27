@@ -17,3 +17,27 @@ services:
   estimator:
     env_file:
       - estimator/.env
+    # Security-critical override: estimator/docker-compose.yml publishes
+    # "8000:8000" for standalone use (live sessions curl it directly per
+    # CLAUDE.md). At the root, estimator must be reachable ONLY on the
+    # internal Compose network. `!override` (Compose spec merge tag, needs
+    # Compose v2.24+ — this host runs v5.3.1) replaces the inherited ports
+    # list instead of appending to it, so the merged result has no published
+    # port at all.
+    ports: !override []
+    environment:
+      AI_SERVICE_TOKEN: ${AI_SERVICE_TOKEN}
+    depends_on:
+      redis:
+        condition: service_healthy
+      estimator-postgres:
+        condition: service_healthy
+
+  estimator-web:
+    environment:
+      AI_SERVICE_TOKEN: ${AI_SERVICE_TOKEN}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      estimator:
+        condition: service_healthy

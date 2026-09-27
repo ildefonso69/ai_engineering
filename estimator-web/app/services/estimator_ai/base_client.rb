@@ -11,11 +11,17 @@ require "faraday/multipart"
 module EstimatorAi
   # Shared error taxonomy. Contexts rescue these (never Faraday directly,
   # except the transport-level ConnectionFailed/TimeoutError).
-  Error              = Class.new(StandardError)
-  InvalidRequest     = Class.new(Error)
-  GuardrailViolation = Class.new(Error)
-  SessionNotFound    = Class.new(Error)
-  ServerError        = Class.new(Error)
+  Error               = Class.new(StandardError)
+  InvalidRequest      = Class.new(Error)
+  GuardrailViolation  = Class.new(Error)
+  SessionNotFound     = Class.new(Error)
+  ServerError         = Class.new(Error)
+  # Raised on 401: the caller and the FastAPI service disagree about the
+  # service-to-service token (X-Service-Token / AI_SERVICE_TOKEN), or, for
+  # the S09 endpoints, the X-API-Key. Distinct from ServerError so callers
+  # can tell "auth misconfigured between estimator-web and estimator" apart
+  # from an upstream failure.
+  AuthenticationError = Class.new(Error)
 
   GUARDRAIL_REASONS = %w[moderation prompt_injection pii].freeze
 
@@ -65,6 +71,8 @@ module EstimatorAi
         else
           raise InvalidRequest, detail.to_s
         end
+      when 401
+        raise AuthenticationError, extract_detail(response.body).to_s.presence || "Missing or invalid service/API token"
       when 404
         raise SessionNotFound, extract_detail(response.body).to_s
       when 415, 422

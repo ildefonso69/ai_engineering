@@ -2,7 +2,7 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Literal
 
-from pydantic import model_validator
+from pydantic import field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -130,6 +130,35 @@ class Settings(BaseSettings):
     # every request) — set them in .env to enable the endpoints.
     RETRIEVAL_API_KEY: str | None = None
     ESTIMATE_API_KEY: str | None = None
+
+    # --- Session 15 field (service-to-service auth, docker-compose isolation) ---
+    # Shared secret between estimator-web and this service, checked on the S04
+    # POST /api/v1/estimate endpoint (the one the real user flow calls). None
+    # disables the check (matches RETRIEVAL_API_KEY/ESTIMATE_API_KEY behaviour
+    # for the S09 routers), which keeps existing dev/test setups working.
+    AI_SERVICE_TOKEN: str | None = None
+
+    @field_validator("AI_SERVICE_TOKEN", mode="before")
+    @classmethod
+    def _empty_service_token_means_unset(cls, value: str | None) -> str | None:
+        """Normalize "" to None for this field only.
+
+        Compose's ``environment: AI_SERVICE_TOKEN: ${AI_SERVICE_TOKEN}`` sets
+        the container env var to an EMPTY STRING (not absent) whenever the
+        root ``.env`` doesn't define ``AI_SERVICE_TOKEN`` — Compose warns
+        about exactly this. Without normalization, pydantic-settings loads
+        that as ``""``, which does NOT match ``require_service_token``'s
+        ``if expected is None: return`` check, so the endpoint falls through
+        to ``_verify(token, "")`` and rejects every request — the opposite of
+        the documented "unset = open" contract, and a silent outage of
+        ``POST /api/v1/estimate`` on any incomplete root ``.env``. Scoped to
+        this field (rather than a project-wide ``env_ignore_empty=True``) so
+        other optional string settings keep pydantic-settings' normal
+        behaviour.
+        """
+        if value == "":
+            return None
+        return value
 
     # --- Session 10 fields (hybrid search + cross-encoder reranking) ---
     # Default retrieval mode. "vector" reproduces the Session 9 baseline; "hybrid"

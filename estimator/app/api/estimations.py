@@ -15,6 +15,7 @@ from __future__ import annotations
 import structlog
 from fastapi import APIRouter, Depends, HTTPException
 
+from app.api.security import require_service_token
 from app.dependencies import get_estimation_service
 from app.foundation.guardrails.input import InputGuardrailViolation
 from app.domain.schemas.estimation import EstimationRequest, EstimationResponse
@@ -22,7 +23,11 @@ from app.domain.estimation_service import EstimationService
 
 log = structlog.get_logger()
 
-router = APIRouter(prefix="/api/v1", tags=["estimations"])
+router = APIRouter(
+    prefix="/api/v1",
+    tags=["estimations"],
+    dependencies=[Depends(require_service_token)],
+)
 
 
 @router.post("/estimate", response_model=EstimationResponse)

@@ -11,12 +11,16 @@ module EstimatorAi
         detail_level: "medium",
         output_format: "phases_table"
       )
+      @original_service_token = Rails.application.config.estimator_ai.ai_service_token
+      @service_token = "shared-secret"
+      Rails.application.config.estimator_ai.ai_service_token = @service_token
       @client = EstimatorAi::EstimationsClient.new(base_url: "http://ai-test")
     end
 
     teardown do
       WebMock.reset!
       WebMock.allow_net_connect!
+      Rails.application.config.estimator_ai.ai_service_token = @original_service_token
     end
 
     def structured_body
@@ -36,9 +40,51 @@ module EstimatorAi
       }
     end
 
+    test "sends the configured service token as X-Service-Token" do
+      stub_request(:post, "http://ai-test/api/v1/estimate")
+        .with(headers: { "X-Service-Token" => @service_token })
+        .to_return(
+          status: 200,
+          body: structured_body.to_json,
+          headers: { "Content-Type" => "application/json" }
+        )
+
+      @client.estimate(@request)
+
+      assert_requested :post, "http://ai-test/api/v1/estimate",
+                        headers: { "X-Service-Token" => @service_token }
+    end
+
+    test "omits X-Service-Token when no token is configured" do
+      Rails.application.config.estimator_ai.ai_service_token = nil
+      client = EstimatorAi::EstimationsClient.new(base_url: "http://ai-test")
+
+      stub_request(:post, "http://ai-test/api/v1/estimate")
+        .to_return(
+          status: 200,
+          body: structured_body.to_json,
+          headers: { "Content-Type" => "application/json" }
+        )
+
+      client.estimate(@request)
+
+      assert_requested :post, "http://ai-test/api/v1/estimate" do |req|
+        !req.headers.key?("X-Service-Token")
+      end
+    end
+
+    test "raises AuthenticationError on 401" do
+      stub_request(:post, "http://ai-test/api/v1/estimate")
+        .to_return(status: 401, body: { detail: "Invalid or missing API key." }.to_json,
+                   headers: { "Content-Type" => "application/json" })
+
+      err = assert_raises(EstimatorAi::AuthenticationError) { @client.estimate(@request) }
+      assert_includes err.message, "Invalid or missing API key."
+    end
+
     test "returns raw Hash payload on 200 with structured body" do
       stub_request(:post, "http://ai-test/api/v1/estimate")
-        .with(body: @request.to_payload.to_json)
+        .with(body: @request.to_payload.to_json, headers: { "X-Service-Token" => @service_token })
         .to_return(
           status: 200,
           body: structured_body.to_json,
