@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 # Closed universe of client sectors present in the sample dataset. Kept as a
 # Literal so a typo or an unexpected sector fails validation loudly instead of
@@ -298,6 +298,52 @@ class EstimateRequest(BaseModel):
 
     transcript: str = Field(min_length=100, max_length=50_000)
     idempotency_key: str | None = Field(default=None, max_length=128)
+
+
+# ---- Session 14 models: human-in-the-loop pause/resume on the multiagent path ----
+# Scoped to the multiagent endpoint only -- ``Estimate.confidence`` stays the
+# strict business-confidence Literal (never widened to carry a pipeline
+# status), so the paused case is a small sibling response type instead.
+
+
+class AwaitingHumanReviewResponse(BaseModel):
+    """Returned by ``POST /v1/estimate/from-transcript-multiagent`` instead of an
+    ``Estimate`` when ``human_review_gate`` pauses the graph via ``interrupt()``."""
+
+    status: Literal["awaiting_human_review"] = "awaiting_human_review"
+    estimation_id: str = Field(
+        description="Checkpointer thread_id; pass it to the resume endpoint."
+    )
+    reasons: list[str] = Field(
+        description="Which trigger(s) fired: low_confidence, outside_historical_range, "
+        "no_historical_precedent."
+    )
+
+
+class HumanReviewDecision(BaseModel):
+    """The human reviewer's verdict, folded into state by ``finalize``."""
+
+    action: Literal["approve", "adjust", "reject"]
+    adjusted_total_engineer_days: int | None = Field(
+        default=None, ge=0, description="Required when action='adjust'."
+    )
+    note: str | None = Field(default=None, max_length=2000)
+
+    @model_validator(mode="after")
+    def adjusted_value_required_for_adjust(self) -> "HumanReviewDecision":
+        """Reject the decision at the HTTP boundary (422) instead of letting
+        ``finalize`` silently no-op the adjustment -- see ``supervisor_graph.py``
+        ``finalize``'s defensive fallback for the belt-and-suspenders check on
+        the graph side (e.g. a decision fed in some other way than this schema)."""
+        if self.action == "adjust" and self.adjusted_total_engineer_days is None:
+            raise ValueError("adjusted_total_engineer_days is required when action='adjust'.")
+        return self
+
+
+class ResumeEstimateRequest(BaseModel):
+    """Payload for ``POST /v1/estimate/{estimation_id}/resume``."""
+
+    decision: HumanReviewDecision
 
 
 # ---- Per-stage request/response models for the wizard (S09 teaching aid) ---

@@ -22,12 +22,22 @@ estimations.
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
-from typing import Any
+from dataclasses import dataclass, field
+from typing import TYPE_CHECKING, Any
 
 import structlog
 from pydantic import BaseModel, Field
+
+if TYPE_CHECKING:
+    # Type-only: keeps this module's runtime imports of generation/rag lazy
+    # (same convention as the rest of this file -- the conductor is the one
+    # place allowed to know about multiple generation siblings, but it still
+    # avoids a module-level cross-sibling import at runtime).
+    from app.generation.agentic.supervisor_graph import SupervisorGraphDependencies
+    from app.generation.rag.schemas import Estimate
 
 from app.config import get_settings
 from app.generation.cag.semantic import EstimationSemanticCache
@@ -76,6 +86,21 @@ class _Component(BaseModel):
 
 class _ComponentBreakdown(BaseModel):
     components: list[_Component] = Field(default_factory=list)
+
+
+@dataclass(frozen=True)
+class MultiagentEstimationOutcome:
+    """Session 14: what the multiagent conductor hands the router.
+
+    ``estimate`` is ``None`` exactly when ``status == "awaiting_human_review"``
+    -- the router branches on ``status`` alone and never has to inspect raw
+    LangGraph state (no ``__interrupt__`` key, no ``SupervisorState``) itself.
+    """
+
+    estimate: Estimate | None
+    status: str
+    estimation_id: str
+    reasons: list[str] = field(default_factory=list)  # only when awaiting_human_review
 
 
 def _exact_cache_key(request: EstimationRequest, prompt_version: str, model: str) -> str:
@@ -633,3 +658,195 @@ class EstimationService:
 
         final_state = await run_estimation_graph(transcript, deps, idempotency_key)
         return Estimate.model_validate(final_state["estimate"])
+
+    def _build_supervisor_deps(self) -> "SupervisorGraphDependencies":
+        """Wire :class:`SupervisorGraphDependencies` -- exactly the four
+        callables the tool-privilege table allows (one per specialist) -- to
+        the real ``generation/rag`` tools. Shared by
+        :meth:`estimate_from_transcript_multiagent` (first run) and
+        :meth:`resume_multiagent_estimation` (continuation) so both drive the
+        SAME compiled graph/dependency wiring:
+
+            requirements_extractor -> LLM-only (reformulate + classify, no tool)
+            budget_searcher        -> app.generation.rag.agent_tools.search_budgets
+            estimate_generator     -> app.generation.rag.agent_tools.calculate_estimate
+            coherence_validator    -> app.generation.rag.validation.validate_estimate
+
+        Same layering constraint as ``estimate_from_transcript_graph``:
+        ``generation/agentic/supervisor_graph.py`` cannot import
+        ``generation/rag`` directly, so this is where the two compose.
+        """
+        from app.dependencies import get_llm_wrapper
+        from app.generation.agentic.supervisor_graph import SupervisorGraphDependencies
+        from app.generation.rag.agent_tools import calculate_estimate as rag_calculate_estimate
+        from app.generation.rag.agent_tools import search_budgets as rag_search_budgets
+        from app.generation.rag.errors import GenerationError
+        from app.generation.rag.query_reformulator import reformulate_query
+        from app.generation.rag.schemas import Estimate, EstimationQuery, RetrievedChunk
+        from app.generation.rag.validation import validate_estimate as rag_validate_estimate
+
+        settings = get_settings()
+
+        async def _extract_requirements(transcript: str) -> dict[str, Any]:
+            # Tool: none. Reuses the same reformulation + LLM classification
+            # already proven in the Session 13 graph closures, bundled into
+            # one callable per the Session 14 dependency contract.
+            query = await reformulate_query(transcript)
+            requirements = [query.function] if query.function else []
+            requirements += [f"Use {tech}" for tech in query.technologies]
+            requirements += query.constraints
+            requirements += [f"Comply with {reg}" for reg in query.regulations]
+
+            structured_query = query.model_dump(mode="json")
+            wrapper = get_llm_wrapper()
+            # ``complete_structured`` is sync; called bare inside this async
+            # closure it would block the event loop for the whole LLM round
+            # trip. Same fix as ``estimator.py::_generate`` for the identical
+            # situation: push it to a worker thread and wrap failures the same
+            # way every other pipeline failure is (caught as ``RagError`` by
+            # the router).
+            try:
+                breakdown, _meta = await asyncio.to_thread(
+                    wrapper.complete_structured,
+                    system_prompt=(
+                        "Group the given software requirements into functional "
+                        "components (e.g. Auth, Payments, Data, Frontend, Infra). "
+                        "Every requirement must belong to exactly one component."
+                    ),
+                    user_message=json.dumps(
+                        {"requirements": requirements, "brief": structured_query}
+                    ),
+                    response_model=_ComponentBreakdown,
+                    model_override=settings.REFORMULATION_MODEL,
+                )
+            except Exception as exc:  # noqa: BLE001
+                raise GenerationError("Component classification failed.") from exc
+            components = [c.model_dump(mode="json") for c in breakdown.components]
+            return {
+                "requirements": requirements,
+                "structured_query": structured_query,
+                "components": components,
+            }
+
+        async def _search_component_budgets(component: dict[str, Any]) -> dict[str, Any]:
+            # Tool: search_budgets, reused as-is (S12).
+            query_text = component.get("name", "") + ": " + "; ".join(
+                component.get("requirements", [])
+            )
+            result = await rag_search_budgets(query_text)
+            return {
+                "component": component.get("name"),
+                "chunks": result.get("items", []),
+                "low_confidence": bool(result.get("low_confidence", not result.get("items"))),
+            }
+
+        def _calculate_estimate(components: list[dict[str, Any]]) -> dict[str, Any]:
+            # Tool: calculate_estimate, reused as-is (S12) -- sync, no LLM.
+            return rag_calculate_estimate(components)
+
+        async def _validate_estimate(
+            estimate_dict: dict[str, Any],
+            kept_chunks: list[dict[str, Any]],
+            structured_query: dict[str, Any],
+        ) -> dict[str, Any]:
+            # Tool: validate_estimate (new in this session, wraps the same
+            # citation/coherence guards + one-retry budget as the linear graph).
+            #
+            # Incidental fix found during live pause/resume verification (not
+            # one of the assigned Session 14 fixes, but a genuine pre-existing
+            # crash that blocks every real run reaching this node): the dicts
+            # in ``kept_chunks`` are the ``search_budgets`` agent-tool shape
+            # (``chunk_id``, no ``chunk_type``), NOT the ``RetrievedChunk``
+            # schema shape (``id``, mandatory ``chunk_type``) --
+            # ``RetrievedChunk.model_validate(c)`` was raising a
+            # ``ValidationError`` (missing ``id``/``chunk_type``) on every
+            # non-empty ``kept_chunks``, an unhandled 500 the graph had never
+            # actually exercised end-to-end before. Same field mapping already
+            # used by ``estimate_from_transcript_graph``'s
+            # ``_generate_estimate`` closure above, for the identical shape.
+            estimate = Estimate.model_validate(estimate_dict)
+            chunks = [
+                RetrievedChunk(
+                    id=c["chunk_id"],
+                    content=c["content"],
+                    sector=c["sector"],
+                    project_year=c["project_year"],
+                    chunk_type="historical_task",
+                    distance=c["distance"],
+                    budget_id=c.get("budget_id"),
+                )
+                for c in kept_chunks
+            ]
+            query = EstimationQuery.model_validate(structured_query)
+            outcome = await rag_validate_estimate(estimate, chunks, query)
+            return {
+                "estimate": outcome["estimate"].model_dump(mode="json"),
+                "validation_passed": outcome["validation_passed"],
+                "confidence": outcome.get("confidence"),
+            }
+
+        return SupervisorGraphDependencies(
+            extract_requirements=_extract_requirements,
+            search_component_budgets=_search_component_budgets,
+            calculate_estimate=_calculate_estimate,
+            validate_estimate=_validate_estimate,
+        )
+
+    @staticmethod
+    def _multiagent_outcome(final_state: dict[str, Any]) -> MultiagentEstimationOutcome:
+        """Turn raw ``SupervisorState`` into the router's typed contract.
+
+        ``final_state["__interrupt__"]`` is the tuple LangGraph's ``ainvoke``
+        returns instead of a finished state when ``human_review_gate`` paused
+        (see the mechanics comment on that node) -- its presence, not any
+        business field, is what distinguishes "paused" from "done".
+        """
+        from app.generation.rag.schemas import Estimate
+
+        thread_id = final_state["thread_id"]
+        interrupts = final_state.get("__interrupt__")
+        if interrupts:
+            reasons = interrupts[0].value.get("reasons", [])
+            return MultiagentEstimationOutcome(
+                estimate=None,
+                status="awaiting_human_review",
+                estimation_id=thread_id,
+                reasons=reasons,
+            )
+        return MultiagentEstimationOutcome(
+            estimate=Estimate.model_validate(final_state["estimate"]),
+            status=final_state.get("status", "validated"),
+            estimation_id=thread_id,
+        )
+
+    async def estimate_from_transcript_multiagent(
+        self,
+        transcript: str,
+        idempotency_key: str | None = None,
+    ) -> MultiagentEstimationOutcome:
+        """Supervisor/workers re-expression of the transcript pipeline (Session 14).
+
+        Returns an ``awaiting_human_review`` outcome (no ``Estimate``) when
+        ``human_review_gate`` pauses the graph; otherwise a finished one.
+        """
+        from app.generation.agentic.supervisor_graph import run_supervisor_graph
+
+        deps = self._build_supervisor_deps()
+        final_state = await run_supervisor_graph(transcript, deps, idempotency_key)
+        return self._multiagent_outcome(final_state)
+
+    async def resume_multiagent_estimation(
+        self,
+        estimation_id: str,
+        decision: dict[str, Any],
+    ) -> MultiagentEstimationOutcome:
+        """Resume a paused multiagent run from its Postgres checkpoint.
+
+        ``estimation_id`` is the checkpointer ``thread_id`` the caller got
+        back from the paused first call (``AwaitingHumanReviewResponse``).
+        """
+        from app.generation.agentic.supervisor_graph import resume_supervisor_graph
+
+        deps = self._build_supervisor_deps()
+        final_state = await resume_supervisor_graph(estimation_id, decision, deps)
+        return self._multiagent_outcome(final_state)

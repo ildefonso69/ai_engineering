@@ -149,6 +149,12 @@ class Settings(BaseSettings):
     # rank well in BOTH branches to win; smaller = a single #1 can dominate.
     RRF_K: int = 60
 
+    # --- Session 14 field (human-in-the-loop gate on the supervisor graph) ---
+    # Below this confidence, the human_review_gate node pauses the graph via
+    # interrupt(). 0.6 is the "medium" boundary in validation.py's
+    # _CONFIDENCE_SCORES table -- anything below medium requires a human look.
+    HUMAN_REVIEW_CONFIDENCE_THRESHOLD: float = 0.6
+
     @model_validator(mode="after")
     def validate_at_least_one_api_key(self) -> "Settings":
         """LiteLLM may try either provider via fallback, so we require at least one key."""

@@ -12,7 +12,16 @@ Two independent guards run after the LLM returns an :class:`Estimate`:
 
 from __future__ import annotations
 
-from app.generation.rag.schemas import Estimate, RetrievedChunk
+from typing import Any
+
+from app.generation.rag.schemas import Estimate, EstimationQuery, RetrievedChunk
+
+_CONFIDENCE_SCORES: dict[str, float] = {
+    "high": 0.9,
+    "medium": 0.6,
+    "low": 0.3,
+    "insufficient": 0.0,
+}
 
 
 def validate_citations(
@@ -63,3 +72,64 @@ def check_coherence(estimate: Estimate) -> bool:
         and not estimate.modules
         and bool(estimate.insufficient_context_explanation)
     )
+
+
+async def validate_estimate(
+    estimate: Estimate,
+    kept_chunks: list[RetrievedChunk],
+    structured_query: EstimationQuery,
+) -> dict[str, Any]:
+    """Single-callable wrapper for the ``coherence_validator`` agent's one tool.
+
+    Reuses :func:`validate_citations` + :func:`check_coherence` with the same
+    one-citation-retry, one-coherence-repair budget already proven by the
+    linear graph's ``validate_and_consolidate`` node (Session 13) -- no new
+    behavior, just packaged as a single function so ``coherence_validator``
+    has exactly one tool to call, per the Session 14 privilege table.
+
+    The corrective retry calls ``estimator._generate`` directly (lazy import:
+    ``estimator.py`` imports this module, so importing it back at module load
+    time would create a cycle).
+    """
+    from app.generation.rag.context_assembler import build_context_block
+    from app.generation.rag.estimator import _generate
+
+    if not kept_chunks:
+        return {
+            "estimate": estimate,
+            "validation_passed": True,
+            "confidence": _CONFIDENCE_SCORES.get(estimate.confidence),
+        }
+
+    context_block = build_context_block(kept_chunks)
+
+    fabricated = validate_citations(estimate, kept_chunks)
+    if fabricated:
+        feedback = (
+            f"your previous response cited invalid source ids: {fabricated}. "
+            "Only cite ids that appear in the <sources> block."
+        )
+        estimate = await _generate(context_block, structured_query, feedback=feedback)
+        if validate_citations(estimate, kept_chunks):
+            estimate = estimate.model_copy(update={"confidence": "low"})
+
+    if not check_coherence(estimate):
+        feedback = (
+            'when confidence is "insufficient", total_engineer_days and '
+            "duration_weeks must be null, modules must be empty and "
+            "insufficient_context_explanation must be filled; otherwise provide "
+            "the modules, tasks and numbers."
+        )
+        estimate = await _generate(context_block, structured_query, feedback=feedback)
+        if not check_coherence(estimate):
+            return {
+                "estimate": estimate,
+                "validation_passed": False,
+                "confidence": _CONFIDENCE_SCORES.get(estimate.confidence),
+            }
+
+    return {
+        "estimate": estimate,
+        "validation_passed": True,
+        "confidence": _CONFIDENCE_SCORES.get(estimate.confidence),
+    }
