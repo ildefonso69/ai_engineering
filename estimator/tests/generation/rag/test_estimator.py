@@ -180,3 +180,26 @@ async def test_idempotency_hit_short_circuits_pipeline(wire):
     assert second == first
     # No stage re-ran on the cached call.
     assert calls == {"reformulate": 1, "search": 1, "generate": 1, "embed": 1}
+
+
+async def test_idempotency_hit_is_not_metered(wire, monkeypatch):
+    """Session 16's docstring promises an idempotency cache hit is "not
+    metered". A fresh (non-cached) call must call record_request_metrics
+    exactly once; a genuine cache hit on the second call must call it zero
+    times — it has no LLM cost to report."""
+    metered_calls: list[str] = []
+    monkeypatch.setattr(
+        orch,
+        "record_request_metrics",
+        lambda **kwargs: metered_calls.append(kwargs["status"]),
+    )
+
+    retrieval = RetrievalResult(chunks=[_chunk(1)], low_confidence=False, candidates_evaluated=5)
+    wire(retrieval=retrieval, estimate=_good_estimate())
+
+    await orch.estimate_from_transcript("x" * 200, idempotency_key="k2")
+    assert metered_calls == ["success"]
+
+    await orch.estimate_from_transcript("x" * 200, idempotency_key="k2")
+    # Second call was a cache hit — still exactly one metered call total.
+    assert metered_calls == ["success"]

@@ -253,7 +253,7 @@ class LLMWrapper:
 
         t0 = time.perf_counter()
         try:
-            result = self._instructor.chat.completions.create(
+            result, completion = self._instructor.chat.completions.create_with_completion(
                 model=target_model,
                 api_key=api_key,
                 timeout=self.timeout,
@@ -274,16 +274,25 @@ class LLMWrapper:
             raise
 
         latency_ms = int((time.perf_counter() - t0) * 1000)
+        usage = getattr(completion, "usage", None)
+        prompt_tokens = getattr(usage, "prompt_tokens", 0) or 0
+        completion_tokens = getattr(usage, "completion_tokens", 0) or 0
         meta = {
             "model": _normalise_model_name(target_model),
             "provider": _provider_from_model(target_model),
             "latency_ms": latency_ms,
+            "prompt_tokens": prompt_tokens,
+            "completion_tokens": completion_tokens,
+            "cost_usd": _estimate_cost(target_model, prompt_tokens, completion_tokens),
         }
         log.info(
             "llm_structured_chat_completed",
             model=meta["model"],
             provider=meta["provider"],
             latency_ms=latency_ms,
+            prompt_tokens=prompt_tokens,
+            completion_tokens=completion_tokens,
+            cost_usd=meta["cost_usd"],
         )
         return result, meta
 
@@ -330,7 +339,12 @@ class LLMWrapper:
 
         t0 = time.perf_counter()
         try:
-            result = self._instructor.chat.completions.create(
+            # ``create_with_completion`` (not plain ``create``) so we get the
+            # raw LiteLLM/provider response alongside the parsed model — that
+            # raw response carries ``.usage`` (prompt/completion tokens),
+            # which ``create`` alone discards. Same primitive already used by
+            # the propositional chunker (app/generation/rag/chunking/strategies/propositional.py).
+            result, completion = self._instructor.chat.completions.create_with_completion(
                 model=target_model,
                 api_key=api_key,
                 timeout=self.timeout,
@@ -351,16 +365,25 @@ class LLMWrapper:
             raise
 
         latency_ms = int((time.perf_counter() - t0) * 1000)
+        usage = getattr(completion, "usage", None)
+        prompt_tokens = getattr(usage, "prompt_tokens", 0) or 0
+        completion_tokens = getattr(usage, "completion_tokens", 0) or 0
         meta = {
             "model": _normalise_model_name(target_model),
             "provider": _provider_from_model(target_model),
             "latency_ms": latency_ms,
+            "prompt_tokens": prompt_tokens,
+            "completion_tokens": completion_tokens,
+            "cost_usd": _estimate_cost(target_model, prompt_tokens, completion_tokens),
         }
         log.info(
             "llm_structured_call_completed",
             model=meta["model"],
             provider=meta["provider"],
             latency_ms=latency_ms,
+            prompt_tokens=prompt_tokens,
+            completion_tokens=completion_tokens,
+            cost_usd=meta["cost_usd"],
         )
         return result, meta
 

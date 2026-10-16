@@ -14,11 +14,14 @@ loop.
 from __future__ import annotations
 
 import asyncio
+import time
+from contextvars import ContextVar
 from uuid import uuid4
 
 import structlog
 
 from app.config import get_settings
+from app.foundation.observability.metrics import record_request_metrics
 from app.generation.rag.context_assembler import build_context_block, truncate_to_token_budget
 from app.generation.rag.errors import GenerationError, MalformedEstimateError
 from app.generation.rag.observability import log_stage
@@ -29,6 +32,16 @@ from app.generation.rag.schemas import Estimate, EstimationQuery
 from app.generation.rag.validation import check_coherence, validate_citations
 
 log = structlog.get_logger()
+
+# Accumulates prompt/completion tokens across every generation call (initial
+# + citation_retry + coherence_repair) within ONE estimate_from_transcript
+# request, so the final request_metrics row reflects the true total cost
+# instead of only the last LLM call. A ContextVar (not a module-level dict)
+# because each HTTP request runs in its own asyncio task — this keeps
+# concurrent requests from bleeding into each other's totals without
+# threading an accumulator through every public function signature (which
+# are locked per this module's docstring).
+_token_totals: ContextVar[dict[str, int] | None] = ContextVar("_token_totals", default=None)
 
 # Sectors present in the corpus; only filter retrieval when the reformulated
 # brief names one of them (avoids over-filtering on free-text sector values).
@@ -79,7 +92,7 @@ async def _generate(
         user_message += f"\n\n<correction>\n{feedback}\n</correction>"
 
     try:
-        estimate, _meta = await asyncio.to_thread(
+        estimate, meta = await asyncio.to_thread(
             wrapper.complete_structured,
             system_prompt=build_system_prompt(),
             user_message=user_message,
@@ -91,6 +104,10 @@ async def _generate(
             # Settings.GENERATION_MAX_TOKENS.
             max_tokens=settings.GENERATION_MAX_TOKENS,
         )
+        totals = _token_totals.get()
+        if totals is not None:
+            totals["prompt_tokens"] += meta.get("prompt_tokens", 0)
+            totals["completion_tokens"] += meta.get("completion_tokens", 0)
         return estimate
     except Exception as exc:  # noqa: BLE001
         raise GenerationError("Grounded estimate generation failed.") from exc
@@ -141,6 +158,62 @@ async def estimate_from_transcript(
     Raises
     ------
     ReformulationError, RetrievalError, GenerationError, MalformedEstimateError
+
+    This is a thin timing/metrics wrapper (Session 16) around
+    ``_run_estimate_from_transcript`` — the pipeline body is unchanged, we
+    just measure wall-clock latency end-to-end and record the 3 production
+    signals (latency, cost via accumulated tokens, status) for BOTH the
+    success and failure paths. An idempotency cache hit is deliberately not
+    metered — it is a cache hit, not a real pipeline run; it has no LLM cost.
+    """
+    request_id = _current_request_id()
+    token_totals = {"prompt_tokens": 0, "completion_tokens": 0}
+    token_reset = _token_totals.set(token_totals)
+    settings = get_settings()
+    t0 = time.perf_counter()
+    try:
+        estimate, from_cache = await _run_estimate_from_transcript(transcript, idempotency_key)
+    except Exception:
+        # Metrics writes are offloaded to a thread (asyncio.to_thread) so a
+        # slow/saturated Postgres can never block this event loop and stall
+        # every other in-flight request — see record_request_metrics.
+        await asyncio.to_thread(
+            record_request_metrics,
+            request_id=request_id,
+            endpoint="/v1/estimate/from-transcript",
+            latency_ms=int((time.perf_counter() - t0) * 1000),
+            prompt_tokens=token_totals["prompt_tokens"],
+            completion_tokens=token_totals["completion_tokens"],
+            model=settings.GENERATION_MODEL,
+            status="error",
+        )
+        raise
+    finally:
+        _token_totals.reset(token_reset)
+
+    if not from_cache:
+        await asyncio.to_thread(
+            record_request_metrics,
+            request_id=request_id,
+            endpoint="/v1/estimate/from-transcript",
+            latency_ms=int((time.perf_counter() - t0) * 1000),
+            prompt_tokens=token_totals["prompt_tokens"],
+            completion_tokens=token_totals["completion_tokens"],
+            model=settings.GENERATION_MODEL,
+            status="success",
+        )
+    return estimate
+
+
+async def _run_estimate_from_transcript(
+    transcript: str,
+    idempotency_key: str | None = None,
+) -> tuple[Estimate, bool]:
+    """The actual pipeline body, unwrapped from the metrics timing above.
+
+    Returns ``(estimate, from_cache)`` — ``from_cache`` is ``True`` only for
+    the idempotency-cache short-circuit, so the caller can skip metering a
+    result that cost no LLM call.
     """
     from app.dependencies import get_embedder, get_idempotency_store, get_token_encoder
 
@@ -152,7 +225,7 @@ async def estimate_from_transcript(
         cached = await asyncio.to_thread(store.get, idempotency_key)
         if cached is not None:
             log.info("idempotency_hit", request_id=request_id, idempotency_key=idempotency_key)
-            return cached
+            return cached, True
 
     # 1. Query understanding.
     with log_stage("reformulation", request_id):
@@ -201,7 +274,7 @@ async def estimate_from_transcript(
         )
         if idempotency_key:
             await asyncio.to_thread(store.set, idempotency_key, estimate)
-        return estimate
+        return estimate, False
 
     # 4. Truncate to the token budget (whole chunks only) + assemble context.
     encoder = get_token_encoder()
@@ -244,7 +317,7 @@ async def estimate_from_transcript(
     if idempotency_key:
         await asyncio.to_thread(store.set, idempotency_key, estimate)
 
-    return estimate
+    return estimate, False
 
 
 async def estimate_from_transcript_agentic(

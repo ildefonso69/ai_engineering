@@ -143,8 +143,11 @@ def test_complete_structured_chat_forwards_messages(wrapper: LLMWrapper) -> None
     ]
 
     expected = _Answer(text="ok")
+    fake_completion = _fake_completion(model="gpt-4o-mini")
     with patch.object(
-        wrapper._instructor.chat.completions, "create", return_value=expected
+        wrapper._instructor.chat.completions,
+        "create_with_completion",
+        return_value=(expected, fake_completion),
     ) as mocked:
         result, meta = wrapper.complete_structured_chat(
             messages=messages,
@@ -167,11 +170,79 @@ def test_complete_structured_chat_uses_anthropic_key_for_claude(wrapper: LLMWrap
     class _Answer(BaseModel):
         text: str
 
+    fake_completion = _fake_completion(model="claude-haiku-4-5-20251001")
     with patch.object(
-        wrapper._instructor.chat.completions, "create", return_value=_Answer(text="x")
+        wrapper._instructor.chat.completions,
+        "create_with_completion",
+        return_value=(_Answer(text="x"), fake_completion),
     ) as mocked:
         wrapper.complete_structured_chat(
             messages=[{"role": "user", "content": "hi"}],
+            response_model=_Answer,
+            model_override="claude-haiku-4-5-20251001",
+        )
+    assert mocked.call_args.kwargs["api_key"] == "fake-anthropic"
+
+
+def test_complete_structured_uses_create_with_completion_and_extracts_usage(
+    wrapper: LLMWrapper,
+) -> None:
+    """``complete_structured`` is the PRIMARY path (used by
+    /v1/estimate/from-transcript's main generation call). It must go through
+    Instructor's ``create_with_completion`` (not plain ``create``) so the raw
+    completion's ``.usage`` survives and ``meta`` carries real token counts
+    and cost — the signal the Session 16 production metrics depend on."""
+    from pydantic import BaseModel
+
+    class _Answer(BaseModel):
+        text: str
+
+    expected = _Answer(text="ok")
+    fake_completion = _fake_completion(
+        model="gpt-4o-mini", input_tokens=321, output_tokens=123
+    )
+    with patch.object(
+        wrapper._instructor.chat.completions,
+        "create_with_completion",
+        return_value=(expected, fake_completion),
+    ) as mocked:
+        result, meta = wrapper.complete_structured(
+            system_prompt="sys",
+            user_message="usr",
+            response_model=_Answer,
+        )
+
+    assert result is expected
+    kwargs = mocked.call_args.kwargs
+    assert kwargs["model"] == "gpt-4o-mini"
+    assert kwargs["response_model"] is _Answer
+    assert meta["model"] == "gpt-4o-mini"
+    assert meta["provider"] == "openai"
+    assert meta["prompt_tokens"] == 321
+    assert meta["completion_tokens"] == 123
+    assert meta["cost_usd"] == pytest.approx(
+        round((321 * 0.15 + 123 * 0.60) / 1_000_000, 6)
+    )
+    assert "latency_ms" in meta
+
+
+def test_complete_structured_uses_anthropic_key_for_claude_override(
+    wrapper: LLMWrapper,
+) -> None:
+    from pydantic import BaseModel
+
+    class _Answer(BaseModel):
+        text: str
+
+    fake_completion = _fake_completion(model="claude-haiku-4-5-20251001")
+    with patch.object(
+        wrapper._instructor.chat.completions,
+        "create_with_completion",
+        return_value=(_Answer(text="x"), fake_completion),
+    ) as mocked:
+        wrapper.complete_structured(
+            system_prompt="sys",
+            user_message="usr",
             response_model=_Answer,
             model_override="claude-haiku-4-5-20251001",
         )
